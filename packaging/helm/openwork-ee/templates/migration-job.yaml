@@ -52,7 +52,7 @@ spec:
             - name: DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
             - name: DATABASE_URL
-              {{- if .Values.secret.create }}
+              {{- if eq .Values.secret.secretsMode "inline" }}
               value: {{ .Values.secret.values.databaseUrl | quote }}
               {{- else }}
               valueFrom:
@@ -61,7 +61,7 @@ spec:
                   key: {{ .Values.secret.keys.databaseUrl }}
               {{- end }}
             - name: DEN_DB_ENCRYPTION_KEY
-              {{- if .Values.secret.create }}
+              {{- if eq .Values.secret.secretsMode "inline" }}
               value: {{ .Values.secret.values.denDbEncryptionKey | quote }}
               {{- else }}
               valueFrom:

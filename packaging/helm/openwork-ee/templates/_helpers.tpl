@@ -60,10 +60,53 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{- define "openwork-ee.secretName" -}}
-{{- if .Values.secret.existingSecret -}}
+{{- if eq .Values.secret.secretsMode "existingSecret" -}}
 {{- .Values.secret.existingSecret -}}
 {{- else -}}
 {{- include "openwork-ee.fullname" . }}-secret
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.secretsMode.validate" -}}
+{{- if not (has .Values.secret.secretsMode (list "inline" "existingSecret" "externalSecrets")) -}}
+{{- fail "secretsMode must be one of inline, existingSecret, externalSecrets" -}}
+{{- end -}}
+{{- if eq .Values.secret.secretsMode "existingSecret" -}}
+{{- if not (.Values.secret.existingSecret | toString | trim) -}}
+{{- fail "secret.existingSecret is required when secretsMode=existingSecret" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne .Values.secret.secretsMode "existingSecret" -}}
+{{- if .Values.secret.existingSecret -}}
+{{- fail "secret.existingSecret is only allowed when secretsMode=existingSecret" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne .Values.secret.secretsMode "inline" -}}
+{{- if .Values.secret.create -}}
+{{- fail "secret.create must be false when secretsMode is not inline" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.externalSecrets.apiVersion" -}}
+{{- if .Capabilities.APIVersions.Has "external-secrets.io/v1" -}}
+external-secrets.io/v1
+{{- else -}}
+external-secrets.io/v1beta1
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.externalSecrets.validate" -}}
+{{- if eq .Values.secret.secretsMode "externalSecrets" -}}
+{{- if not (.Values.externalSecrets.secretStoreRef.name | toString | trim) -}}
+{{- fail "externalSecrets.secretStoreRef.name is required when secretsMode=externalSecrets" -}}
+{{- end -}}
+{{- if not (has .Values.externalSecrets.secretStoreRef.kind (list "SecretStore" "ClusterSecretStore")) -}}
+{{- fail "externalSecrets.secretStoreRef.kind must be SecretStore or ClusterSecretStore" -}}
+{{- end -}}
+{{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
+{{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

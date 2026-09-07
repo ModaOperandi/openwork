@@ -164,7 +164,22 @@ redis:
   allowInsecureInternal: false
 
 secret:
+  # How this deployment manages secrets. One of:
+  #   inline:         the chart renders a v1/Secret from secret.values.
+  #                   Local evaluation only — the values live wherever this
+  #                   values file lives, so never commit real credentials.
+  #   existingSecret: workloads consume a pre-created Secret named by
+  #                   secret.existingSecret; the chart renders nothing.
+  #   externalSecrets: the chart renders an ExternalSecret (ESO) that
+  #                   materializes the workload Secret from an external provider
+  #                   — the GitOps/ArgoCD-safe path; git holds only store
+  #                   references and remote key paths.
+  secretsMode: inline
+  # Ignored unless secretsMode: inline. Must be false in every other mode;
+  # the render fails otherwise.
   create: true
+  # REQUIRED when secretsMode: existingSecret — must be populated, not blank
+  # or empty (the render fails otherwise). Must stay empty in other modes.
   existingSecret: ""
   keys:
     databaseUrl: DATABASE_URL
@@ -187,6 +202,10 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+  # Used ONLY when secretsMode: inline; ignored otherwise. REQUIRED then:
+  # databaseUrl, betterAuthSecret, denDbEncryptionKey (the workloads cannot
+  # start without them). Never commit real credentials here — use
+  # externalSecrets mode for anything beyond local evaluation.
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseRedisUrl: ""
@@ -208,6 +227,44 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+
+# External Secrets Operator (ESO) configuration. Active only when
+# secretsMode: externalSecrets; the chart renders an ExternalSecret that
+# materializes the workload Secret from the provider. Requires ESO and a
+# SecretStore/ClusterSecretStore on the destination cluster.
+externalSecrets:
+  # ATTENTION: every secret.keys.* value the workloads consume must exist as
+  # a JSON property in your provider under pathPrefix — the chart pulls each
+  # key by name from <pathPrefix>/<KEY_NAME> and cannot invent missing ones.
+  # How often ESO re-syncs the Secret from the provider.
+  refreshInterval: 1h
+  # Store holding the remote keys. For AWS Secrets Manager the store's
+  # spec.provider.aws is configured on the (Cluster)SecretStore itself; the
+  # chart only references it by name.
+  secretStoreRef:
+    # REQUIRED when secretsMode: externalSecrets — must be populated, not
+    # blank or empty (the render fails otherwise), and must match the name of
+    # your SecretStore/ClusterSecretStore. Without it ESO has no provider to
+    # read from.
+    name: ""
+    kind: ClusterSecretStore
+  target:
+    # Owner deletes the Secret with the ExternalSecret; Merge keeps it.
+    creationPolicy: Owner
+    # Retain keeps the Secret if the ExternalSecret is deleted.
+    deletionPolicy: Retain
+  # Remote path trunk: every secret.keys.* value (DATABASE_URL,
+  # BETTER_AUTH_SECRET, ...) is pulled from <pathPrefix>/<KEY_NAME>. The
+  # chart renders spec.data from secret.keys, so the key list here can never
+  # drift from what the workloads consume.
+  # REQUIRED when secretsMode: externalSecrets (render fails if blank).
+  # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
+  pathPrefix: ""
+  # Strategy fields applied uniformly to every pulled key (ESO defaults,
+  # matching the external-secrets.io/v1 schema).
+  conversionStrategy: Default
+  decodingStrategy: None
+  metadataPolicy: None
 
 installerArtifacts:
   enabled: false

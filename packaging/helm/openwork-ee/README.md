@@ -284,19 +284,85 @@ Published self-host planning pages:
 
 ## Secrets
 
-The chart can create an Opaque Secret from `secret.values`, or consume an existing Secret:
+The deployment declares how it manages secrets with a single key:
 
 ```yaml
 secret:
+  secretsMode: inline # inline | existingSecret | externalSecrets
+```
+
+- `inline` (default): the chart renders an Opaque Secret from `secret.values`.
+  Local evaluation only — the values live wherever the values file lives, so
+  never commit real credentials.
+- `existingSecret`: workloads consume a pre-created Secret named by
+  `secret.existingSecret` (requires `secret.create: false`); the chart renders
+  no secret resource.
+- `externalSecrets`: the chart renders an
+  [External Secrets Operator](https://external-secrets.io/) `ExternalSecret`
+  that materializes the workload Secret from an external provider — the
+  GitOps/ArgoCD-safe path, where git holds only store references and remote
+  key paths (requires `secret.create: false`).
+
+Any `secret.keys` override applies in every mode, since all three resolve the
+workload Secret through the same names. The mode combinations are enforced at
+render time: an unknown `secretsMode`, a missing `secret.existingSecret` in
+`existingSecret` mode, `secret.existingSecret` set in any other mode, and
+`secret.create: true` outside `inline` mode all fail the render.
+
+### existingSecret
+
+```yaml
+secret:
+  secretsMode: existingSecret
   create: false
   existingSecret: openwork-ee-secrets
 ```
 
-The existing Secret must contain the keys listed under `secret.keys`, especially:
+The existing Secret must be created in the `namespace` where the chart deploys
+(default `openwork`) before the workloads start, and must contain the keys
+listed under `secret.keys`, especially:
 
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
+
+### externalSecrets (GitOps / ArgoCD)
+
+For GitOps flows (ArgoCD runs `helm template`, so anything in values lands in
+git and in rendered manifests), use ESO mode. The chart renders an
+`ExternalSecret` that materializes the same-named workload Secret from your
+provider in-cluster:
+
+The chart renders `spec.data` — the oldest stable ESO shape, unchanged since
+`external-secrets.io/v1beta1` — pulling every `secret.keys.*` entry from
+`<pathPrefix>/<KEY_NAME>` in the provider. The key list is generated from
+`secret.keys`, so it can never drift from what the workloads consume:
+
+```yaml
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    # References an existing (Cluster)SecretStore; for AWS Secrets Manager the
+    # store itself carries spec.provider.aws (region, auth), the chart only
+    # points at it by name.
+    name: external-secrets
+    kind: ClusterSecretStore
+  refreshInterval: 5m
+  # Every secret.keys.* value must exist as a JSON property under this trunk,
+  # e.g. eks/openwork/prod/den/DATABASE_URL.
+  pathPrefix: "eks/openwork/prod/den"
+```
+
+Every property the workloads consume must exist in your provider under
+`pathPrefix`, named like `secret.keys.*` values (`DATABASE_URL`,
+`BETTER_AUTH_SECRET`, ...) — the chart pulls each key by name and cannot
+invent missing ones. `target.deletionPolicy` defaults to `Retain`, so
+uninstalling the release keeps the materialized Secret. ESO must be installed
+on the destination cluster with a `SecretStore`/`ClusterSecretStore`; the
+chart selects `external-secrets.io/v1` or `v1beta1` from cluster capabilities
+and fails loudly at sync time if the CRDs are missing.
 
 Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
