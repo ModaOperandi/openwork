@@ -65,12 +65,28 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+  Returns the workload Secret name as a quoted string: existingSecret values
+  are user-supplied and may look like YAML scalars (true, 1234), which would
+  otherwise render non-string manifest fields and fail at apply time.
+  Consumers that need the bare name trim the quotes.
+*/}}
 {{- define "openwork-ee.secretName" -}}
 {{- if eq .Values.secret.secretsMode "existingSecret" -}}
-{{- .Values.secret.existingSecret | toString | trim -}}
+{{- .Values.secret.existingSecret | toString | trim | quote -}}
 {{- else -}}
-{{- include "openwork-ee.fullname" . }}-secret
+{{- printf "%s-secret" (include "openwork-ee.fullname" .) | quote -}}
 {{- end -}}
+{{- end -}}
+
+{{/* Bare (unquoted) Secret name for contexts that need it (e.g. lookup). */}}
+{{- define "openwork-ee.secretNameRaw" -}}
+{{- include "openwork-ee.secretName" . | trimAll "\"" -}}
+{{- end -}}
+
+{{/* Bare (unquoted) namespace name for contexts that need it. */}}
+{{- define "openwork-ee.namespaceRaw" -}}
+{{- include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- end -}}
 
 {{- define "openwork-ee.secretsMode.validate" -}}

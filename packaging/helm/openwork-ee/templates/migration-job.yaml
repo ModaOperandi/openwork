@@ -56,8 +56,8 @@ spec:
             - sh
             - -c
             - |
-              until kubectl get secret {{ include "openwork-ee.secretName" . }} -n {{ include "openwork-ee.namespace" . }} > /dev/null 2>&1; do
-                echo "waiting for secret {{ include "openwork-ee.secretName" . }}..."
+              until kubectl get secret {{ include "openwork-ee.secretNameRaw" . }} -n {{ include "openwork-ee.namespaceRaw" . }} > /dev/null 2>&1; do
+                echo "waiting for secret {{ include "openwork-ee.secretNameRaw" . }}..."
                 sleep 3
               done
       {{- end }}
