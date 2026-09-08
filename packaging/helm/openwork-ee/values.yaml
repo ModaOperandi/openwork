@@ -175,8 +175,12 @@ secret:
   #                   — the GitOps/ArgoCD-safe path; git holds only store
   #                   references and remote key paths.
   secretsMode: inline
-  # Ignored unless secretsMode: inline. Must be false in every other mode;
-  # the render fails otherwise.
+  # Must be true when secretsMode: inline and false in every other mode; the
+  # render fails otherwise. Exception: legacy values files upgraded from
+  # before secretsMode that set create: false with the untouched placeholder
+  # values below are auto-corrected to existingSecret mode (using the
+  # chart-created secret name when existingSecret is blank) — real values with
+  # create: false still fail the render.
   create: true
   # REQUIRED when secretsMode: existingSecret — must be populated, not blank
   # or empty (the render fails otherwise). Must stay empty in other modes.
