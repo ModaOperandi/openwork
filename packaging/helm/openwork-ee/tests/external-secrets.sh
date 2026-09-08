@@ -92,10 +92,28 @@ assert_count "$enabled_rendered" 'conversionStrategy: Default' 20
 assert_count "$enabled_rendered" 'decodingStrategy: None' 20
 assert_count "$enabled_rendered" 'metadataPolicy: None' 20
 # Target Secret keeps the chart secret name so envFrom/secretKeyRef wiring holds.
-# 7 occurrences: ExternalSecret metadata.name + target.name, envFrom in den-api,
-# den-web, env-probe, and the migration Job's two secretKeyRef entries.
+# 7 name: occurrences: ExternalSecret metadata.name + target.name, envFrom in
+# den-api, den-web, env-probe, and the Job's two secretKeyRef entries. Plus the
+# Role resourceNames entry and the initContainer command referencing the same
+# name.
 assert_count "$enabled_rendered" 'name: openwork-ee-secret' 7
+assert_count "$enabled_rendered" 'resourceNames: ["openwork-ee-secret"]' 1
 assert_count "$enabled_rendered" 'secretKeyRef:' 2
+# The migration Job waits for the asynchronously materialized Secret instead of
+# failing on a missing one, and the ExternalSecret applies before the Job
+# (hook weight -10 precedes the Job's -5).
+assert_contains "$enabled_rendered" 'name: wait-for-secret'
+assert_contains "$enabled_rendered" 'until kubectl get secret openwork-ee-secret'
+assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
+assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
+assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1
+
+# Inline mode renders no wait RBAC/initContainer and keeps the migration hook
+# without the ExternalSecret hook annotations.
+assert_count "$default_rendered" 'name: wait-for-secret' 0
+assert_count "$default_rendered" 'kind: ServiceAccount' 0
+assert_contains "$default_rendered" 'helm.sh/hook": pre-install,pre-upgrade'
+assert_count "$default_rendered" 'helm.sh/hook-weight": "-10"' 0
 # Inline secret values never appear in any rendered manifest.
 assert_not_contains "$enabled_rendered" 'CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH'
 assert_not_contains "$enabled_rendered" 'change-me@mysql'
@@ -186,6 +204,8 @@ secret:
   create: false
 externalSecrets:
   pathPrefix: trunk
+  secretStoreRef:
+    name: ""
 YAML
 assert_failure "$no_store_values" 'externalSecrets.secretStoreRef.name is required when secretsMode=externalSecrets'
 

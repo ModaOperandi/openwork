@@ -115,10 +115,18 @@ external-secrets.io/v1beta1
 
 {{- define "openwork-ee.externalSecrets.validate" -}}
 {{- if eq .Values.secret.secretsMode "externalSecrets" -}}
-{{- if not (.Values.externalSecrets.secretStoreRef.name | toString | trim) -}}
+{{- $storeName := "" -}}
+{{- if .Values.externalSecrets.secretStoreRef -}}
+{{- $storeName = .Values.externalSecrets.secretStoreRef.name | toString | trim -}}
+{{- end -}}
+{{- if not $storeName -}}
 {{- fail "externalSecrets.secretStoreRef.name is required when secretsMode=externalSecrets" -}}
 {{- end -}}
-{{- if not (has .Values.externalSecrets.secretStoreRef.kind (list "SecretStore" "ClusterSecretStore")) -}}
+{{- $storeKind := "" -}}
+{{- if .Values.externalSecrets.secretStoreRef -}}
+{{- $storeKind = .Values.externalSecrets.secretStoreRef.kind | toString -}}
+{{- end -}}
+{{- if not (has $storeKind (list "SecretStore" "ClusterSecretStore")) -}}
 {{- fail "externalSecrets.secretStoreRef.kind must be SecretStore or ClusterSecretStore" -}}
 {{- end -}}
 {{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}

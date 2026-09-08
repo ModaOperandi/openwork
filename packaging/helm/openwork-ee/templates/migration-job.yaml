@@ -30,6 +30,9 @@ spec:
       {{- end }}
     spec:
       restartPolicy: Never
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      serviceAccountName: {{ include "openwork-ee.fullname" . }}-migrate
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -37,6 +40,26 @@ spec:
       {{- if .Values.customCa.enabled }}
       volumes:
         {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
+      {{- /*
+        When the Secret is materialized asynchronously (ESO or out-of-band
+        creation), the Job must not fail on a missing Secret before it exists.
+        Block in an init container until it appears instead of erroring on the
+        env secretKeyRef.
+      */}}
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      initContainers:
+        - name: wait-for-secret
+          image: bitnami/kubectl:latest
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until kubectl get secret {{ include "openwork-ee.secretName" . }} -n {{ include "openwork-ee.namespace" . }} > /dev/null 2>&1; do
+                echo "waiting for secret {{ include "openwork-ee.secretName" . }}..."
+                sleep 3
+              done
       {{- end }}
       containers:
         - name: migrate
