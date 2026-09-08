@@ -104,7 +104,7 @@ assert_count "$enabled_rendered" 'secretKeyRef:' 2
 # (hook weight -10 precedes the Job's -5).
 assert_contains "$enabled_rendered" 'name: wait-for-secret'
 assert_contains "$enabled_rendered" 'until kubectl get secret openwork-ee-secret'
-assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33"'
+assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33.4"'
 assert_not_contains "$enabled_rendered" 'kubectl:latest'
 
 # Whitespace is trimmed at render, matching validation: a padded store name,
@@ -339,6 +339,26 @@ helm template openwork-ee "$chart_dir" -f "$legacy_shim_values" \
 assert_contains "$job_only_rendered" 'secretKeyRef:'
 assert_not_contains "$job_only_rendered" 'change-me@mysql'
 assert_not_contains "$job_only_rendered" 'CHANGE_ME_32_CHARS_MINIMUM'
+
+# The RBAC template applies the same validation/shim when rendered in
+# isolation: with legacy create=false values it renders the wait RBAC
+# (existingSecret branch), and an invalid secretsMode fails fast.
+rbac_only_rendered="$tmp_dir/rbac-only.yaml"
+helm template openwork-ee "$chart_dir" -f "$legacy_shim_values" \
+  --show-only templates/migration-rbac.yaml > "$rbac_only_rendered"
+# ServiceAccount manifest + RoleBinding subject both carry "kind: ServiceAccount".
+assert_count "$rbac_only_rendered" 'kind: ServiceAccount' 2
+
+rbac_only_bad="$tmp_dir/rbac-only-bad.yaml"
+cat > "$rbac_only_bad" <<'YAML'
+secret:
+  secretsMode: vault
+YAML
+if helm template openwork-ee "$chart_dir" -f "$rbac_only_bad" \
+  --show-only templates/migration-rbac.yaml > /dev/null 2>&1; then
+  printf 'Expected helm template to fail for invalid secretsMode in migration-rbac.yaml\n' >&2
+  exit 1
+fi
 
 # inline + create=false with REAL-looking values is incoherent: fail, never
 # silently reroute someone's credentials.

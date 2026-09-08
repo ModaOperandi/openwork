@@ -5,6 +5,8 @@
   mode. In hook mode these must be hooks with an earlier weight than the Job
   (-6 precedes the Job's -5) so they exist before it starts.
 */}}
+{{- /* Runs the legacy create=false shim before the secretsMode check below. */}}
+{{- include "openwork-ee.secretsMode.validate" . }}
 {{- if and .Values.migrations.enabled (ne .Values.secret.secretsMode "inline") }}
 {{- $asHook := .Values.migrations.hook }}
 apiVersion: v1

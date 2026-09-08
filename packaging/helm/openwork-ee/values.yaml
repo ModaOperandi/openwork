@@ -376,10 +376,11 @@ migrations:
   podAnnotations: {}
   resources: {}
   # Pinned kubectl image for the wait-for-secret init container (non-inline
-  # secretsModes). Never use a floating tag here.
+  # secretsModes). Keep this at a specific patch version (or digest); avoid
+  # floating tags so installs are reproducible.
   kubectlImage:
     repository: bitnami/kubectl
-    tag: "1.33"
+    tag: "1.33.4"
   command:
     - node
   args:
