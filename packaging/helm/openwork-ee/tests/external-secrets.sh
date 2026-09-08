@@ -104,6 +104,41 @@ assert_count "$enabled_rendered" 'secretKeyRef:' 2
 # (hook weight -10 precedes the Job's -5).
 assert_contains "$enabled_rendered" 'name: wait-for-secret'
 assert_contains "$enabled_rendered" 'until kubectl get secret openwork-ee-secret'
+assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33"'
+assert_not_contains "$enabled_rendered" 'kubectl:latest'
+
+# Whitespace is trimmed at render, matching validation: a padded store name,
+# prefix, and existingSecret render trimmed rather than failing or embedding
+# spaces.
+padded_values="$tmp_dir/padded-values.yaml"
+cat > "$padded_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    name: "  external-secrets  "
+  pathPrefix: "  eks/openwork/prod/den  "
+YAML
+padded_rendered="$tmp_dir/padded.yaml"
+helm template openwork-ee "$chart_dir" -f "$padded_values" > "$padded_rendered"
+assert_contains "$padded_rendered" 'name: "external-secrets"'
+assert_contains "$padded_rendered" 'key: "eks/openwork/prod/den/DATABASE_URL"'
+assert_not_contains "$padded_rendered" '  external-secrets'
+assert_not_contains "$padded_rendered" ' eks/openwork'
+
+# existingSecret with padding renders the trimmed name everywhere.
+padded_existing_values="$tmp_dir/padded-existing-values.yaml"
+cat > "$padded_existing_values" <<'YAML'
+secret:
+  secretsMode: existingSecret
+  create: false
+  existingSecret: "  padded-secret  "
+YAML
+padded_existing_rendered="$tmp_dir/padded-existing.yaml"
+helm template openwork-ee "$chart_dir" -f "$padded_existing_values" > "$padded_existing_rendered"
+assert_count "$padded_existing_rendered" 'name: padded-secret' 5
+assert_not_contains "$padded_existing_rendered" '  padded-secret'
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1

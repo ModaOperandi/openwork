@@ -375,6 +375,11 @@ migrations:
   activeDeadlineSeconds: 600
   podAnnotations: {}
   resources: {}
+  # Pinned kubectl image for the wait-for-secret init container (non-inline
+  # secretsModes). Never use a floating tag here.
+  kubectlImage:
+    repository: bitnami/kubectl
+    tag: "1.33"
   command:
     - node
   args:

@@ -61,7 +61,7 @@ app.kubernetes.io/component: {{ .component }}
 
 {{- define "openwork-ee.secretName" -}}
 {{- if eq .Values.secret.secretsMode "existingSecret" -}}
-{{- .Values.secret.existingSecret -}}
+{{- .Values.secret.existingSecret | toString | trim -}}
 {{- else -}}
 {{- include "openwork-ee.fullname" . }}-secret
 {{- end -}}

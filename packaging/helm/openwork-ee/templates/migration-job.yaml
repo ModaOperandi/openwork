@@ -50,7 +50,7 @@ spec:
       {{- if ne .Values.secret.secretsMode "inline" }}
       initContainers:
         - name: wait-for-secret
-          image: bitnami/kubectl:latest
+          image: "{{ .Values.migrations.kubectlImage.repository }}:{{ .Values.migrations.kubectlImage.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - sh
