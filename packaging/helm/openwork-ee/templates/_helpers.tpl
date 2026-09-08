@@ -7,6 +7,12 @@
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- /*
+  Dedupe in both directions: contains handles release names that already
+  include the chart name (my-openwork-ee); hasPrefix handles release names
+  that prefix the chart name (release "openwork", chart "openwork-ee"), which
+  would otherwise produce doubled names like openwork-openwork-ee-secret.
+*/ -}}
 {{- if or (contains $name .Release.Name) (hasPrefix .Release.Name $name) -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
