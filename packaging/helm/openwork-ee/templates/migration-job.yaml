@@ -1,4 +1,6 @@
 {{- include "openwork-ee.customCa.validate" . }}
+{{- /* Runs the legacy create=false shim before any secretsMode check below. */}}
+{{- include "openwork-ee.secretsMode.validate" . }}
 {{- if .Values.migrations.enabled }}
 apiVersion: batch/v1
 kind: Job

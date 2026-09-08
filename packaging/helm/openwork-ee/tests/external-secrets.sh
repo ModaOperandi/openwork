@@ -275,6 +275,16 @@ assert_count "$legacy_shim_rendered" 'kind: ExternalSecret' 0
 assert_not_contains "$legacy_shim_rendered" 'change-me@mysql'
 assert_not_contains "$legacy_shim_rendered" 'CHANGE_ME_32_CHARS_MINIMUM'
 
+# The shim must also apply when the migration Job is rendered in isolation:
+# --show-only skips configmap/secret templates, so the Job template has to run
+# the validator (and shim) itself before its secretsMode check.
+job_only_rendered="$tmp_dir/job-only.yaml"
+helm template openwork-ee "$chart_dir" -f "$legacy_shim_values" \
+  --show-only templates/migration-job.yaml > "$job_only_rendered"
+assert_contains "$job_only_rendered" 'secretKeyRef:'
+assert_not_contains "$job_only_rendered" 'change-me@mysql'
+assert_not_contains "$job_only_rendered" 'CHANGE_ME_32_CHARS_MINIMUM'
+
 # inline + create=false with REAL-looking values is incoherent: fail, never
 # silently reroute someone's credentials.
 inline_real_values="$tmp_dir/inline-real-values.yaml"
