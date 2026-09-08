@@ -7,7 +7,13 @@
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- $name := default .Chart.Name .Values.nameOverride -}}
-{{- if contains $name .Release.Name -}}
+{{- /*
+  Dedupe in both directions: contains handles release names that already
+  include the chart name (my-openwork-ee); hasPrefix handles release names
+  that prefix the chart name (release "openwork", chart "openwork-ee"), which
+  would otherwise produce doubled names like openwork-openwork-ee-secret.
+*/ -}}
+{{- if or (contains $name .Release.Name) (hasPrefix .Release.Name $name) -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
@@ -59,11 +65,101 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+  Returns the workload Secret name as a quoted string: existingSecret values
+  are user-supplied and may look like YAML scalars (true, 1234), which would
+  otherwise render non-string manifest fields and fail at apply time.
+  Consumers that need the bare name trim the quotes.
+*/}}
 {{- define "openwork-ee.secretName" -}}
-{{- if .Values.secret.existingSecret -}}
-{{- .Values.secret.existingSecret -}}
+{{- if eq .Values.secret.secretsMode "existingSecret" -}}
+{{- .Values.secret.existingSecret | toString | trim | quote -}}
 {{- else -}}
-{{- include "openwork-ee.fullname" . }}-secret
+{{- printf "%s-secret" (include "openwork-ee.fullname" .) | quote -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Bare (unquoted) Secret name for contexts that need it (e.g. lookup). */}}
+{{- define "openwork-ee.secretNameRaw" -}}
+{{- include "openwork-ee.secretName" . | trimAll "\"" -}}
+{{- end -}}
+
+{{/* Bare (unquoted) namespace name for contexts that need it. */}}
+{{- define "openwork-ee.namespaceRaw" -}}
+{{- include "openwork-ee.namespace" . | trimAll "\"" -}}
+{{- end -}}
+
+{{- define "openwork-ee.secretsMode.validate" -}}
+{{- if not (has .Values.secret.secretsMode (list "inline" "existingSecret" "externalSecrets")) -}}
+{{- fail "secretsMode must be one of inline, existingSecret, externalSecrets" -}}
+{{- end -}}
+{{- if eq .Values.secret.secretsMode "existingSecret" -}}
+{{- if not (.Values.secret.existingSecret | toString | trim) -}}
+{{- fail "secret.existingSecret is required when secretsMode=existingSecret" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne .Values.secret.secretsMode "existingSecret" -}}
+{{- if .Values.secret.existingSecret -}}
+{{- fail "secret.existingSecret is only allowed when secretsMode=existingSecret" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne .Values.secret.secretsMode "inline" -}}
+{{- if .Values.secret.create -}}
+{{- fail "secret.create must be false when secretsMode is not inline" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq .Values.secret.secretsMode "inline") (not .Values.secret.create) -}}
+{{- /* Legacy migration shim: values files from before secretsMode shipped that
+       set create=false with untouched placeholder values meant "no inline
+       secrets" — treat that as existingSecret mode. Real-looking values with
+       create=false are incoherent and must fail, not be silently rerouted. */ -}}
+{{- $dsn := .Values.secret.values.databaseUrl | toString -}}
+{{- $auth := .Values.secret.values.betterAuthSecret | toString -}}
+{{- $enc := .Values.secret.values.denDbEncryptionKey | toString -}}
+{{- /*
+  Reroute only when ALL three required values are still placeholders: a
+  partially-filled inline block means someone set real values and create=false
+  is incoherent — fail rather than silently ignoring their real values.
+*/ -}}
+{{- $dsnIsPlaceholder := or (contains "change-me@" $dsn) (contains "******" $dsn) -}}
+{{- if and (hasPrefix "CHANGE_ME" $auth) (hasPrefix "CHANGE_ME" $enc) $dsnIsPlaceholder -}}
+{{- $_ := set .Values.secret "secretsMode" "existingSecret" -}}
+{{- if not (.Values.secret.existingSecret | toString | trim) -}}
+{{- $_ := set .Values.secret "existingSecret" (include "openwork-ee.fullname" . | printf "%s-secret") -}}
+{{- end -}}
+{{- else -}}
+{{- fail "secret.create must be true when secretsMode=inline (set secretsMode=existingSecret or externalSecrets to source secrets externally)" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.externalSecrets.apiVersion" -}}
+{{- if .Capabilities.APIVersions.Has "external-secrets.io/v1" -}}
+external-secrets.io/v1
+{{- else -}}
+external-secrets.io/v1beta1
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.externalSecrets.validate" -}}
+{{- if eq .Values.secret.secretsMode "externalSecrets" -}}
+{{- $storeName := "" -}}
+{{- if .Values.externalSecrets.secretStoreRef -}}
+{{- $storeName = .Values.externalSecrets.secretStoreRef.name | toString | trim -}}
+{{- end -}}
+{{- if not $storeName -}}
+{{- fail "externalSecrets.secretStoreRef.name is required when secretsMode=externalSecrets" -}}
+{{- end -}}
+{{- $storeKind := "" -}}
+{{- if .Values.externalSecrets.secretStoreRef -}}
+{{- $storeKind = .Values.externalSecrets.secretStoreRef.kind | toString -}}
+{{- end -}}
+{{- if not (has $storeKind (list "SecretStore" "ClusterSecretStore")) -}}
+{{- fail "externalSecrets.secretStoreRef.kind must be SecretStore or ClusterSecretStore" -}}
+{{- end -}}
+{{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
+{{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
