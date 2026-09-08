@@ -256,7 +256,7 @@ externalSecrets:
     # blank or empty (the render fails otherwise), and must match the name of
     # your SecretStore/ClusterSecretStore. Without it ESO has no provider to
     # read from.
-    name: ""
+    name: "external-secrets"
     kind: ClusterSecretStore
   target:
     # Owner deletes the Secret with the ExternalSecret; Merge keeps it.
