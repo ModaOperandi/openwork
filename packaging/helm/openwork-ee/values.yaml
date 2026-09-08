@@ -8,6 +8,12 @@ fullnameOverride: ""
 # `helm install`, keep this aligned with `--namespace` / the release namespace.
 namespace: openwork
 
+# Render a Namespace object for the namespace above, so GitOps flows (ArgoCD
+# runs helm template and does not create namespaces unless CreateNamespace=true)
+# manage it as a resource from git. Set false only when the platform team
+# provisions namespaces out of band.
+createNamespace: true
+
 image:
   tag: latest
   pullPolicy: IfNotPresent
