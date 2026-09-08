@@ -36,6 +36,18 @@ assert_contains "$default_rendered" 'name: "openwork"'
 assert_count "$default_rendered" '  namespace: "openwork"' 8
 assert_count "$default_rendered" '  namespace: "kube-system"' 0
 
+# With the migration hook enabled (default), the Namespace renders as the
+# earliest hook so first-time installs into a fresh namespace work: hook
+# resources (ExternalSecret, migration RBAC/Job) are namespaced and would
+# otherwise be created before a normal-manifest Namespace exists.
+assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
+
+# With the migration hook disabled, the Namespace is a plain manifest.
+nohook_rendered="$tmp_dir/nohook.yaml"
+helm template openwork-ee "$chart_dir" --set migrations.hook=false > "$nohook_rendered"
+assert_count "$nohook_rendered" 'kind: Namespace' 1
+assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
+
 # createNamespace=false skips the Namespace object (out-of-band provisioning).
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
