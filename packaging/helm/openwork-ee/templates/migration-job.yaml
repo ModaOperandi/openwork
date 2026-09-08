@@ -83,7 +83,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.databaseUrl }}
+                  key: {{ .Values.secret.keys.databaseUrl | quote }}
               {{- end }}
             - name: DEN_DB_ENCRYPTION_KEY
               {{- if eq .Values.secret.secretsMode "inline" }}
@@ -92,7 +92,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.denDbEncryptionKey }}
+                  key: {{ .Values.secret.keys.denDbEncryptionKey | quote }}
               {{- end }}
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}

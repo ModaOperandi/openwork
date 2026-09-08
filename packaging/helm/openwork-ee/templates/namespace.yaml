@@ -16,7 +16,15 @@
   any externally-created resources in it).
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
-{{- $existing := lookup "v1" "Namespace" "" $namespaceName -}}
+{{- /*
+  Gate the cluster-scoped lookup behind createNamespace so restricted-RBAC
+  helm install/upgrade (no get on cluster Namespaces) still renders when the
+  feature is off.
+*/ -}}
+{{- $existing := dict -}}
+{{- if .Values.createNamespace -}}
+{{- $existing = lookup "v1" "Namespace" "" $namespaceName -}}
+{{- end -}}
 {{- if and .Values.createNamespace (not $existing) }}
 apiVersion: v1
 kind: Namespace

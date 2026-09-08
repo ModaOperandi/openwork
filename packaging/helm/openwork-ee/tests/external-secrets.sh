@@ -80,10 +80,10 @@ assert_contains "$enabled_rendered" 'deletionPolicy: Retain'
 assert_count "$enabled_rendered" 'dataFrom:' 0
 # spec.data rendered from secret.keys: one entry per key (20 in values.yaml).
 assert_count "$enabled_rendered" 'secretKey:' 20
-assert_contains "$enabled_rendered" 'secretKey: DATABASE_URL'
-assert_contains "$enabled_rendered" 'secretKey: BETTER_AUTH_SECRET'
-assert_contains "$enabled_rendered" 'secretKey: DEN_DB_ENCRYPTION_KEY'
-assert_contains "$enabled_rendered" 'secretKey: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE'
+assert_contains "$enabled_rendered" 'secretKey: "DATABASE_URL'
+assert_contains "$enabled_rendered" 'secretKey: "BETTER_AUTH_SECRET'
+assert_contains "$enabled_rendered" 'secretKey: "DEN_DB_ENCRYPTION_KEY'
+assert_contains "$enabled_rendered" 'secretKey: "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE'
 # Remote keys resolve to pathPrefix + env key name.
 assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DATABASE_URL"'
 assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_INITIAL_ADMIN_BOOTSTRAP_CODE"'
@@ -168,9 +168,9 @@ externalSecrets:
 YAML
 renamed_rendered="$tmp_dir/renamed.yaml"
 helm template openwork-ee "$chart_dir" -f "$renamed_values" > "$renamed_rendered"
-assert_contains "$renamed_rendered" 'secretKey: CUSTOM_DB_URL'
+assert_contains "$renamed_rendered" 'secretKey: "CUSTOM_DB_URL'
 assert_contains "$renamed_rendered" 'key: "trunk/CUSTOM_DB_URL"'
-assert_not_contains "$renamed_rendered" 'secretKey: DATABASE_URL'
+assert_not_contains "$renamed_rendered" 'secretKey: "DATABASE_URL'
 
 # Strategy overrides apply uniformly to every entry.
 strategy_values="$tmp_dir/strategy-values.yaml"
