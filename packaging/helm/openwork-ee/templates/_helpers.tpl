@@ -86,6 +86,23 @@ app.kubernetes.io/component: {{ .component }}
 {{- fail "secret.create must be false when secretsMode is not inline" -}}
 {{- end -}}
 {{- end -}}
+{{- if and (eq .Values.secret.secretsMode "inline") (not .Values.secret.create) -}}
+{{- /* Legacy migration shim: values files from before secretsMode shipped that
+       set create=false with untouched placeholder values meant "no inline
+       secrets" — treat that as existingSecret mode. Real-looking values with
+       create=false are incoherent and must fail, not be silently rerouted. */ -}}
+{{- $dsn := .Values.secret.values.databaseUrl | toString -}}
+{{- $auth := .Values.secret.values.betterAuthSecret | toString -}}
+{{- $enc := .Values.secret.values.denDbEncryptionKey | toString -}}
+{{- if or (hasPrefix "CHANGE_ME" $auth) (hasPrefix "CHANGE_ME" $enc) (contains "change-me@" $dsn) (contains "******" $dsn) -}}
+{{- $_ := set .Values.secret "secretsMode" "existingSecret" -}}
+{{- if not (.Values.secret.existingSecret | toString | trim) -}}
+{{- $_ := set .Values.secret "existingSecret" (include "openwork-ee.fullname" . | printf "%s-secret") -}}
+{{- end -}}
+{{- else -}}
+{{- fail "secret.create must be true when secretsMode=inline (set secretsMode=existingSecret or externalSecrets to source secrets externally)" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "openwork-ee.externalSecrets.apiVersion" -}}

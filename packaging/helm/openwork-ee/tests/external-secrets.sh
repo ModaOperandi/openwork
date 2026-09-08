@@ -261,6 +261,33 @@ secret:
 YAML
 assert_failure "$empty_mode_values" 'secretsMode must be one of inline, existingSecret, externalSecrets'
 
+# Legacy shim: inline mode with create=false and untouched placeholder values
+# auto-corrects to existingSecret (no Secret rendered, no inline env values).
+legacy_shim_values="$tmp_dir/legacy-shim-values.yaml"
+cat > "$legacy_shim_values" <<'YAML'
+secret:
+  create: false
+YAML
+legacy_shim_rendered="$tmp_dir/legacy-shim.yaml"
+helm template openwork-ee "$chart_dir" -f "$legacy_shim_values" > "$legacy_shim_rendered"
+assert_count "$legacy_shim_rendered" 'kind: Secret' 0
+assert_count "$legacy_shim_rendered" 'kind: ExternalSecret' 0
+assert_not_contains "$legacy_shim_rendered" 'change-me@mysql'
+assert_not_contains "$legacy_shim_rendered" 'CHANGE_ME_32_CHARS_MINIMUM'
+
+# inline + create=false with REAL-looking values is incoherent: fail, never
+# silently reroute someone's credentials.
+inline_real_values="$tmp_dir/inline-real-values.yaml"
+cat > "$inline_real_values" <<'YAML'
+secret:
+  create: false
+  values:
+    databaseUrl: "mysql://app:s3cret@db.internal:3306/openwork_den"
+    betterAuthSecret: "real-auth-secret-value-here-32chars"
+    denDbEncryptionKey: "real-encryption-key-value-here-32ch"
+YAML
+assert_failure "$inline_real_values" 'secret.create must be true when secretsMode=inline'
+
 # existingSecret mode renders no Secret and no ExternalSecret.
 existing_rendered="$tmp_dir/existing.yaml"
 cat > "$tmp_dir/existing-values.yaml" <<'YAML'
