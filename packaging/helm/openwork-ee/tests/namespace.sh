@@ -41,6 +41,27 @@ assert_count "$default_rendered" '  namespace: "kube-system"' 0
 # resources (ExternalSecret, migration RBAC/Job) are namespaced and would
 # otherwise be created before a normal-manifest Namespace exists.
 assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
+# The Namespace hook must never carry before-hook-creation: a hook re-run
+# would delete and recreate the Namespace, cascade-deleting everything in it.
+# (The env-probe test Job legitimately uses before-hook-creation, so scope the
+# check to the Namespace document.)
+assert_namespace_hook_safe() {
+  local file="$1"
+  local in_ns=0
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == 'kind: Namespace' ]]; then
+      in_ns=1
+    elif [[ "$line" =~ ^kind:\  ]]; then
+      in_ns=0
+    fi
+    if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'*'before-hook-creation'* ]]; then
+      printf 'Namespace must not use before-hook-creation (cascade-deletes contents on re-run)\n' >&2
+      return 1
+    fi
+  done < "$file"
+}
+assert_namespace_hook_safe "$default_rendered"
 
 # With the migration hook disabled, the Namespace is a plain manifest.
 nohook_rendered="$tmp_dir/nohook.yaml"
