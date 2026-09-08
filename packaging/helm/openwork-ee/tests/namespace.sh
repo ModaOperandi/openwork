@@ -52,7 +52,7 @@ assert_namespace_hook_safe() {
   while IFS= read -r line; do
     if [[ "$line" == 'kind: Namespace' ]]; then
       in_ns=1
-    elif [[ "$line" =~ ^kind:\  ]]; then
+    elif [[ "$line" == '---' ]]; then
       in_ns=0
     fi
     if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'*'before-hook-creation'* ]]; then

@@ -100,7 +100,13 @@ app.kubernetes.io/component: {{ .component }}
 {{- $dsn := .Values.secret.values.databaseUrl | toString -}}
 {{- $auth := .Values.secret.values.betterAuthSecret | toString -}}
 {{- $enc := .Values.secret.values.denDbEncryptionKey | toString -}}
-{{- if or (hasPrefix "CHANGE_ME" $auth) (hasPrefix "CHANGE_ME" $enc) (contains "change-me@" $dsn) (contains "******" $dsn) -}}
+{{- /*
+  Reroute only when ALL three required values are still placeholders: a
+  partially-filled inline block means someone set real values and create=false
+  is incoherent — fail rather than silently ignoring their real values.
+*/ -}}
+{{- $dsnIsPlaceholder := or (contains "change-me@" $dsn) (contains "******" $dsn) -}}
+{{- if and (hasPrefix "CHANGE_ME" $auth) (hasPrefix "CHANGE_ME" $enc) $dsnIsPlaceholder -}}
 {{- $_ := set .Values.secret "secretsMode" "existingSecret" -}}
 {{- if not (.Values.secret.existingSecret | toString | trim) -}}
 {{- $_ := set .Values.secret "existingSecret" (include "openwork-ee.fullname" . | printf "%s-secret") -}}

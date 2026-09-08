@@ -373,6 +373,18 @@ secret:
 YAML
 assert_failure "$inline_real_values" 'secret.create must be true when secretsMode=inline'
 
+# Partially real values must also fail: a real DSN with untouched CHANGE_ME
+# placeholders is not a legacy untouched file — rerouting it would silently
+# drop the real DSN the operator set.
+inline_partial_values="$tmp_dir/inline-partial-values.yaml"
+cat > "$inline_partial_values" <<'YAML'
+secret:
+  create: false
+  values:
+    databaseUrl: "mysql://app:s3cret@db.internal:3306/openwork_den"
+YAML
+assert_failure "$inline_partial_values" 'secret.create must be true when secretsMode=inline'
+
 # existingSecret mode renders no Secret and no ExternalSecret.
 existing_rendered="$tmp_dir/existing.yaml"
 cat > "$tmp_dir/existing-values.yaml" <<'YAML'
