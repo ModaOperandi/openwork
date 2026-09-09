@@ -118,6 +118,25 @@ assert_contains "$optional_keys_rendered" 'secretKey: "SMTP_PASS"'
 assert_contains "$optional_keys_rendered" 'secretKey: "DATABASE_REDIS_URL"'
 assert_contains "$optional_keys_rendered" 'key: "eks/openwork/prod/den/SMTP_PASS"'
 
+# Adding an optionalKeys entry must roll the workloads: in ESO mode secret.yaml
+# renders empty, so checksum/secret hashes the resolved key set (required +
+# optionalKeys) to change the pod template when the key set changes. envFrom
+# keys are fixed at pod start, so without this the new key never reaches pods.
+checksum_annotation() {
+  grep 'checksum/secret:' "$1" | sort -u
+}
+if [[ "$(checksum_annotation "$enabled_rendered")" == "$(checksum_annotation "$optional_keys_rendered")" ]]; then
+  printf 'Expected checksum/secret to change when optionalKeys changes\n' >&2
+  exit 1
+fi
+# Stable across renders of the same values (no spurious rolls).
+enabled_rendered_2="$tmp_dir/enabled-2.yaml"
+helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered_2"
+if [[ "$(checksum_annotation "$enabled_rendered")" != "$(checksum_annotation "$enabled_rendered_2")" ]]; then
+  printf 'Expected checksum/secret to be stable across identical renders\n' >&2
+  exit 1
+fi
+
 # Unknown optionalKeys entries fail fast.
 bad_optional_values="$tmp_dir/bad-optional-values.yaml"
 cat > "$bad_optional_values" <<'YAML'

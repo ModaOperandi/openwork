@@ -47,7 +47,7 @@ spec:
         {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/secret: {{ include "openwork-ee.secretChecksum" . }}
         {{- with .Values.denWeb.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

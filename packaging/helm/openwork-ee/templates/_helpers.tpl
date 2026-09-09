@@ -89,6 +89,25 @@ app.kubernetes.io/component: {{ .component }}
 {{- include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- end -}}
 
+{{/*
+  Workload roll trigger for secret content. In inline mode the rendered
+  secret.yaml hash already changes with secret.values. In externalSecrets mode
+  secret.yaml renders empty, so hash the resolved key set (required + opt-in
+  optionalKeys) instead: adding/removing an optionalKeys entry changes the pod
+  template and rolls the workloads, so envFrom picks up the new keys that ESO
+  materializes out of band. existingSecret mode is operator-managed — no chart
+  values drive its content, so no trigger is possible there.
+*/}}
+{{- define "openwork-ee.secretChecksum" -}}
+{{- if eq .Values.secret.secretsMode "externalSecrets" -}}
+{{- $requiredKeys := list "databaseUrl" "betterAuthSecret" "denDbEncryptionKey" -}}
+{{- $optionalKeys := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- concat $requiredKeys $optionalKeys | uniq | sortAlpha | toJson | sha256sum -}}
+{{- else -}}
+{{- include (print $.Template.BasePath "/secret.yaml") . | sha256sum -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openwork-ee.secretsMode.validate" -}}
 {{- if not (has .Values.secret.secretsMode (list "inline" "existingSecret" "externalSecrets")) -}}
 {{- fail "secretsMode must be one of inline, existingSecret, externalSecrets" -}}

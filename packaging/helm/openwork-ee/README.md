@@ -370,11 +370,14 @@ The three required keys must exist in your provider under `pathPrefix` — a
 missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
 "skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
 you list under `optionalKeys` must exist in the provider, and keys you omit do
-not land in the Secret. How the app behaves when a key is absent depends on the
-key — feature keys (`DAYTONA_API_KEY`, `POLAR_ACCESS_TOKEN`, ...) gate the
-feature off; keys with chart-side defaults (`smtpPort` → `587`,
-`smtpSecure` → `false`) fall back to those defaults only when the Secret is not
-created at all. Check each key's consumer before omitting it. `optionalKeys`
+not land in the Secret. Omitted keys are simply absent from the workload
+environment, so check each consumer before omitting one. Two illustrative
+cases: `DAYTONA_API_KEY` is *required* when `config.provisioner.mode` is
+`daytona` — Den API rejects startup without it, so omitting it there breaks
+boot, whereas it is safe to omit under the default `stub` provisioner; and
+omitted `SMTP_PORT`/`SMTP_SECURE` fall back to the application's own defaults
+(`587` / `false`) whenever they are absent, regardless of whether the Secret
+carries them. `optionalKeys`
 entries are `secret.keys` **property names** (camelCase, e.g. `smtpPass`); the
 provider path and the target Secret key use the corresponding **value**
 (`SMTP_PASS` by default, overridable via `secret.keys.smtpPass`). So list

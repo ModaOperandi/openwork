@@ -243,9 +243,11 @@ secret:
 # materializes the workload Secret from the provider. Requires ESO and a
 # SecretStore/ClusterSecretStore on the destination cluster.
 externalSecrets:
-  # ATTENTION: every secret.keys.* value the workloads consume must exist as
-  # a JSON property in your provider under pathPrefix — the chart pulls each
-  # key by name from <pathPrefix>/<KEY_NAME> and cannot invent missing ones.
+  # ATTENTION: the three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
+  # DEN_DB_ENCRYPTION_KEY) and every key you list under optionalKeys must exist
+  # in your provider under pathPrefix — the chart pulls each rendered key by
+  # name from <pathPrefix>/<KEY_NAME> and a missing rendered key fails the
+  # ExternalSecret. Keys you neither need nor list are not pulled.
   # How often ESO re-syncs the Secret from the provider.
   refreshInterval: 1h
   # Store holding the remote keys. For AWS Secrets Manager the store's
