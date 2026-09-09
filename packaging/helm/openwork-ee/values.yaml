@@ -265,15 +265,19 @@ externalSecrets:
     deletionPolicy: Retain
   # Remote path trunk: keys are pulled from <pathPrefix>/<KEY_NAME>. The chart
   # renders spec.data for the three boot-critical keys (DATABASE_URL,
-  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus whatever optionalKeys lists,
-  # so the rendered key list can never drift from what the workloads consume.
+  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus the entries explicitly
+  # selected in optionalKeys. The optional list is opt-in and maintained by
+  # hand — if a future feature starts consuming a new secret key, add its
+  # secret.keys.* name to optionalKeys and create the provider entry.
   # REQUIRED when secretsMode: externalSecrets (render fails if blank).
   # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
   pathPrefix: ""
-  # Optional keys to also pull from the provider, by secret.keys.* name
-  # (e.g. smtpPass, databaseRedisUrl). Only listed keys get a spec.data entry —
-  # ESO's remoteRef has no "skip if missing", so keys you do not list here do
-  # not need to exist in the provider and simply do not land in the Secret.
+  # Optional keys to also pull from the provider. Entries are secret.keys
+  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
+  # path and target Secret key use the corresponding value (SMTP_PASS).
+  # Only listed keys get a spec.data entry — ESO's remoteRef has no "skip if
+  # missing", so keys you do not list here need not exist in the provider and
+  # simply do not land in the Secret.
   optionalKeys: []
   # Strategy fields applied uniformly to every pulled key (ESO defaults,
   # matching the external-secrets.io/v1 schema).

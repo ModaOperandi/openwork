@@ -369,9 +369,17 @@ externalSecrets:
 The three required keys must exist in your provider under `pathPrefix` — a
 missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
 "skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
-you list under `optionalKeys` must exist in the provider, and keys you omit
-simply do not land in the Secret (the app reads them as unset). Key names must
-match `secret.keys.*` values; the chart pulls each by name and cannot rename.
+you list under `optionalKeys` must exist in the provider, and keys you omit do
+not land in the Secret. How the app behaves when a key is absent depends on the
+key — feature keys (`DAYTONA_API_KEY`, `POLAR_ACCESS_TOKEN`, ...) gate the
+feature off; keys with chart-side defaults (`smtpPort` → `587`,
+`smtpSecure` → `false`) fall back to those defaults only when the Secret is not
+created at all. Check each key's consumer before omitting it. `optionalKeys`
+entries are `secret.keys` **property names** (camelCase, e.g. `smtpPass`); the
+provider path and the target Secret key use the corresponding **value**
+(`SMTP_PASS` by default, overridable via `secret.keys.smtpPass`). So list
+`smtpPass` here, ensure `eks/.../SMTP_PASS` (or your overridden value) exists
+in the provider, and the Secret key will be `SMTP_PASS`.
 `target.deletionPolicy` defaults to `Retain`, so uninstalling the release keeps
 the materialized Secret. ESO must be installed on the destination cluster with
 a `SecretStore`/`ClusterSecretStore`; the chart selects
