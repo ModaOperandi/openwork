@@ -102,7 +102,11 @@ app.kubernetes.io/component: {{ .component }}
 {{- if eq .Values.secret.secretsMode "externalSecrets" -}}
 {{- $requiredKeys := list "databaseUrl" "betterAuthSecret" "denDbEncryptionKey" -}}
 {{- $optionalKeys := .Values.externalSecrets.optionalKeys | default (list) -}}
-{{- concat $requiredKeys $optionalKeys | uniq | sortAlpha | toJson | sha256sum -}}
+{{- $resolvedKeys := list -}}
+{{- range $name := concat $requiredKeys $optionalKeys | uniq | sortAlpha -}}
+{{- $resolvedKeys = append $resolvedKeys (index $.Values.secret.keys $name) -}}
+{{- end -}}
+{{- $resolvedKeys | uniq | sortAlpha | toJson | sha256sum -}}
 {{- else -}}
 {{- include (print $.Template.BasePath "/secret.yaml") . | sha256sum -}}
 {{- end -}}
