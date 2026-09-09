@@ -165,6 +165,25 @@ assert_contains "$enabled_rendered" 'until kubectl get secret "$SECRET" -n "$NS"
 assert_count "$enabled_rendered" 'serviceAccountName: openwork-ee-workload' 2
 assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33.4"'
 assert_not_contains "$enabled_rendered" 'kubectl:latest'
+# Default optional-key wait is 60s.
+assert_contains "$enabled_rendered" '+ 60 ))'
+
+# optionalKeyWaitSeconds: 0 must render 0, not be coerced to the 60s default
+# (Helm `default` treats numeric 0 as empty).
+zero_wait_values="$tmp_dir/zero-wait-values.yaml"
+cat > "$zero_wait_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  pathPrefix: trunk
+  optionalKeys: [smtpPass]
+  optionalKeyWaitSeconds: 0
+YAML
+zero_wait_rendered="$tmp_dir/zero-wait.yaml"
+helm template openwork-ee "$chart_dir" -f "$zero_wait_values" > "$zero_wait_rendered"
+assert_contains "$zero_wait_rendered" '+ 0 ))'
+assert_not_contains "$zero_wait_rendered" '+ 60 ))'
 
 # Whitespace is trimmed at render, matching validation: a padded store name,
 # prefix, and existingSecret render trimmed rather than failing or embedding

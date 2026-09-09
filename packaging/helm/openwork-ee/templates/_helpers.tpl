@@ -171,12 +171,14 @@ app.kubernetes.io/component: {{ .component }}
             sleep 3
           done
         done
-        # Bounded wait for the optional remainder, then proceed.
-        deadline=$(( $(date +%s) + {{ .Values.externalSecrets.optionalKeyWaitSeconds | default 60 }} ))
+        # Bounded wait for the optional remainder, then proceed. Rendered
+        # directly (not via `default`) so an explicit 0 truly skips the wait —
+        # `default 60` treats numeric 0 as empty and would force 60.
+        deadline=$(( $(date +%s) + {{ .Values.externalSecrets.optionalKeyWaitSeconds }} ))
         for key in {{ include "openwork-ee.optionalSecretKeys" . }}; do
           while ! kubectl get secret "$SECRET" -n "$NS" -o jsonpath="{.data.$key}" 2>/dev/null | grep -q .; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "proceeding without optional key $key (waited {{ .Values.externalSecrets.optionalKeyWaitSeconds | default 60 }}s)"
+              echo "proceeding without optional key $key (waited {{ .Values.externalSecrets.optionalKeyWaitSeconds }}s)"
               break
             fi
             echo "waiting for optional key $key in secret $SECRET..."
