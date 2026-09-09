@@ -44,22 +44,13 @@ spec:
       {{- /*
         When the Secret is materialized asynchronously (ESO or out-of-band
         creation), the Job must not fail on a missing Secret before it exists.
-        Block in an init container until it appears instead of erroring on the
-        env secretKeyRef.
+        Block in an init container until it appears (and, in externalSecrets
+        mode, holds the expected keys) instead of erroring on the env
+        secretKeyRef.
       */}}
       {{- if ne .Values.secret.secretsMode "inline" }}
       initContainers:
-        - name: wait-for-secret
-          image: "{{ .Values.migrations.kubectlImage.repository }}:{{ .Values.migrations.kubectlImage.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command:
-            - sh
-            - -c
-            - |
-              until kubectl get secret {{ include "openwork-ee.secretNameRaw" . }} -n {{ include "openwork-ee.namespaceRaw" . }} > /dev/null 2>&1; do
-                echo "waiting for secret {{ include "openwork-ee.secretNameRaw" . }}..."
-                sleep 3
-              done
+        {{- include "openwork-ee.waitForSecretInitContainer" . | nindent 8 }}
       {{- end }}
       containers:
         - name: migrate

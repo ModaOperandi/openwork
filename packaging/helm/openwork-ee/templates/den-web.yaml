@@ -60,6 +60,11 @@ spec:
       volumes:
         {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
       {{- end }}
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      serviceAccountName: {{ include "openwork-ee.fullname" . }}-workload
+      initContainers:
+        {{- include "openwork-ee.waitForSecretInitContainer" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: den-web
           image: "{{ .Values.denWeb.image.repository }}:{{ default .Values.image.tag .Values.denWeb.image.tag }}"

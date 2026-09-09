@@ -281,6 +281,13 @@ externalSecrets:
   # missing", so keys you do not list here need not exist in the provider and
   # simply do not land in the Secret.
   optionalKeys: []
+  # Seconds the workload init container waits for an optional key to appear in
+  # the materialized Secret before starting without it. envFrom snapshots keys
+  # at pod start, so a pod that boots before ESO reconciles a newly added
+  # optional key would otherwise hold a stale environment until its next
+  # restart. Required keys always block indefinitely. Set 0 to skip waiting
+  # for optional keys entirely.
+  optionalKeyWaitSeconds: 60
   # Strategy fields applied uniformly to every pulled key (ESO defaults,
   # matching the external-secrets.io/v1 schema).
   conversionStrategy: Default

@@ -157,7 +157,12 @@ assert_count "$enabled_rendered" 'secretKeyRef:' 2
 # failing on a missing one, and the ExternalSecret applies before the Job
 # (hook weight -10 precedes the Job's -5).
 assert_contains "$enabled_rendered" 'name: wait-for-secret'
-assert_contains "$enabled_rendered" 'until kubectl get secret openwork-ee-secret'
+# Workloads + migration Job all get the wait initContainer in ESO mode (inference
+# is off by default): den-api, den-web, migrate Job.
+assert_count "$enabled_rendered" 'name: wait-for-secret' 3
+assert_contains "$enabled_rendered" 'until kubectl get secret "$SECRET" -n "$NS"'
+# Workloads run under the dedicated SA so the initContainer can read the Secret.
+assert_count "$enabled_rendered" 'serviceAccountName: openwork-ee-workload' 2
 assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33.4"'
 assert_not_contains "$enabled_rendered" 'kubectl:latest'
 
@@ -193,6 +198,10 @@ padded_existing_rendered="$tmp_dir/padded-existing.yaml"
 helm template openwork-ee "$chart_dir" -f "$padded_existing_values" > "$padded_existing_rendered"
 assert_count "$padded_existing_rendered" 'name: "padded-secret"' 5
 assert_not_contains "$padded_existing_rendered" '  padded-secret'
+
+# Hook ordering for the migration chain: Namespace (-11) -> ExternalSecret
+# (-10) -> migration RBAC (-6) -> migration Job (-5).
+assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-11"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1
