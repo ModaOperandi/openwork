@@ -92,10 +92,13 @@ app.kubernetes.io/component: {{ .component }}
 {{/*
   Workload roll trigger for secret content. In inline mode the rendered
   secret.yaml hash already changes with secret.values. In externalSecrets mode
-  secret.yaml renders empty, so hash the resolved key set (required + opt-in
-  optionalKeys) instead: adding/removing an optionalKeys entry changes the pod
-  template and rolls the workloads, so envFrom picks up the new keys that ESO
-  materializes out of band. existingSecret mode is operator-managed — no chart
+  secret.yaml renders empty, so hash the inputs that change the Secret ESO
+  materializes — the resolved key set, pathPrefix, the secretStoreRef, and the
+  conversion/decoding strategies (which change the decoded bytes). envFrom keys
+  and values are fixed at pod start, so any of these changing must roll the
+  workloads. Non-content ExternalSecret fields (refreshInterval, metadataPolicy,
+  hook annotations, target policies) are deliberately excluded so they do not
+  cause spurious rolls. existingSecret mode is operator-managed — no chart
   values drive its content, so no trigger is possible there.
 */}}
 {{- define "openwork-ee.secretChecksum" -}}
@@ -106,7 +109,15 @@ app.kubernetes.io/component: {{ .component }}
 {{- range $name := concat $requiredKeys $optionalKeys | uniq | sortAlpha -}}
 {{- $resolvedKeys = append $resolvedKeys (index $.Values.secret.keys $name) -}}
 {{- end -}}
-{{- $resolvedKeys | uniq | sortAlpha | toJson | sha256sum -}}
+{{- $store := .Values.externalSecrets.secretStoreRef | default dict -}}
+{{- $input := dict
+    "keys" ($resolvedKeys | uniq | sortAlpha)
+    "pathPrefix" (.Values.externalSecrets.pathPrefix | toString | trim | trimSuffix "/")
+    "secretStoreName" ($store.name | default "")
+    "secretStoreKind" ($store.kind | default "")
+    "conversionStrategy" .Values.externalSecrets.conversionStrategy
+    "decodingStrategy" .Values.externalSecrets.decodingStrategy -}}
+{{- $input | toJson | sha256sum -}}
 {{- else -}}
 {{- include (print $.Template.BasePath "/secret.yaml") . | sha256sum -}}
 {{- end -}}
