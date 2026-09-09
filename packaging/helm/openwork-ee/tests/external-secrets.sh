@@ -91,6 +91,9 @@ assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_INITIAL_ADM
 assert_count "$enabled_rendered" 'conversionStrategy: Default' 20
 assert_count "$enabled_rendered" 'decodingStrategy: None' 20
 assert_count "$enabled_rendered" 'metadataPolicy: None' 20
+# Only the three boot-critical keys are required in the provider; the other 17
+# are optional so a missing optional key does not block the whole Secret.
+assert_count "$enabled_rendered" 'optional: true' 17
 # Target Secret keeps the chart secret name so envFrom/secretKeyRef wiring holds.
 # 7 name: occurrences: ExternalSecret metadata.name + target.name, envFrom in
 assert_count "$enabled_rendered" 'name: "openwork-ee-secret"' 7
@@ -133,7 +136,7 @@ secret:
 YAML
 padded_existing_rendered="$tmp_dir/padded-existing.yaml"
 helm template openwork-ee "$chart_dir" -f "$padded_existing_values" > "$padded_existing_rendered"
-assert_count "$padded_existing_rendered" 'name: padded-secret' 5
+assert_count "$padded_existing_rendered" 'name: "padded-secret"' 5
 assert_not_contains "$padded_existing_rendered" '  padded-secret'
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
@@ -392,6 +395,6 @@ YAML
 helm template openwork-ee "$chart_dir" -f "$tmp_dir/existing-values.yaml" > "$existing_rendered"
 assert_count "$existing_rendered" 'kind: Secret' 0
 assert_count "$existing_rendered" 'kind: ExternalSecret' 0
-assert_count "$existing_rendered" 'name: manually-managed' 5
+assert_count "$existing_rendered" 'name: "manually-managed"' 5
 
 printf 'external-secrets chart checks passed\n'
