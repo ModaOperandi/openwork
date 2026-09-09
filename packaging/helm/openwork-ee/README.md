@@ -334,9 +334,10 @@ git and in rendered manifests), use ESO mode. The chart renders an
 provider in-cluster:
 
 The chart renders `spec.data` — the oldest stable ESO shape, unchanged since
-`external-secrets.io/v1beta1` — pulling every `secret.keys.*` entry from
-`<pathPrefix>/<KEY_NAME>` in the provider. The key list is generated from
-`secret.keys`, so it can never drift from what the workloads consume:
+`external-secrets.io/v1beta1` — pulling keys from `<pathPrefix>/<KEY_NAME>` in
+the provider. Only the three boot-critical keys (`DATABASE_URL`,
+`BETTER_AUTH_SECRET`, `DEN_DB_ENCRYPTION_KEY`) are rendered by default; add
+more by name via `optionalKeys`:
 
 ```yaml
 secret:
@@ -351,23 +352,31 @@ externalSecrets:
     kind: ClusterSecretStore
   refreshInterval: 5m
   # The three boot-critical keys must exist under this trunk, e.g.
-  # eks/openwork/prod/den/DATABASE_URL. All other keys are optional.
+  # eks/openwork/prod/den/DATABASE_URL.
   pathPrefix: "eks/openwork/prod/den"
+  # Additional keys to pull, by secret.keys.* name. Only listed keys are
+  # rendered, so keys you do not list need not exist in the provider.
+  optionalKeys:
+    - databaseRedisUrl
+    - emailFrom
+    - smtpHost
+    - smtpPort
+    - smtpUser
+    - smtpPass
+    - smtpSecure
 ```
 
-Only three keys must exist in your provider under `pathPrefix`:
-`DATABASE_URL`, `BETTER_AUTH_SECRET`, and `DEN_DB_ENCRYPTION_KEY` — without
-them the workloads cannot start, so their `remoteRef`s are required and a
-missing one fails the ExternalSecret loudly. Every other `secret.keys.*` entry
-is rendered `optional: true` (requires ESO ≥ 0.5.3), so a missing optional key
-(`DAYTONA_API_KEY`, `SMTP_PASS`, ...) does not block the Secret — ESO skips it
-and the app reads it as unset. Key names must match `secret.keys.*` values;
-the chart pulls each by name and cannot rename. `target.deletionPolicy`
-defaults to `Retain`, so uninstalling the release keeps the materialized
-Secret. ESO must be installed on the destination cluster with a
-`SecretStore`/`ClusterSecretStore`; the chart selects `external-secrets.io/v1`
-or `v1beta1` from cluster capabilities and fails loudly at sync time if the
-CRDs are missing.
+The three required keys must exist in your provider under `pathPrefix` — a
+missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
+"skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
+you list under `optionalKeys` must exist in the provider, and keys you omit
+simply do not land in the Secret (the app reads them as unset). Key names must
+match `secret.keys.*` values; the chart pulls each by name and cannot rename.
+`target.deletionPolicy` defaults to `Retain`, so uninstalling the release keeps
+the materialized Secret. ESO must be installed on the destination cluster with
+a `SecretStore`/`ClusterSecretStore`; the chart selects
+`external-secrets.io/v1` or `v1beta1` from cluster capabilities and fails
+loudly at sync time if the CRDs are missing.
 
 Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 

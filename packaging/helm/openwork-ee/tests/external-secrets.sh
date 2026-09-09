@@ -78,22 +78,58 @@ assert_count "$enabled_rendered" 'refreshInterval: "5m"' 1
 assert_contains "$enabled_rendered" 'creationPolicy: Owner'
 assert_contains "$enabled_rendered" 'deletionPolicy: Retain'
 assert_count "$enabled_rendered" 'dataFrom:' 0
-# spec.data rendered from secret.keys: one entry per key (20 in values.yaml).
-assert_count "$enabled_rendered" 'secretKey:' 20
-assert_contains "$enabled_rendered" 'secretKey: "DATABASE_URL'
-assert_contains "$enabled_rendered" 'secretKey: "BETTER_AUTH_SECRET'
-assert_contains "$enabled_rendered" 'secretKey: "DEN_DB_ENCRYPTION_KEY'
-assert_contains "$enabled_rendered" 'secretKey: "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE'
+# spec.data renders the three boot-critical keys only by default (ESO remoteRef
+# has no skip-if-missing, so optional keys are opt-in via optionalKeys).
+assert_count "$enabled_rendered" 'secretKey:' 3
+assert_contains "$enabled_rendered" 'secretKey: "DATABASE_URL"'
+assert_contains "$enabled_rendered" 'secretKey: "BETTER_AUTH_SECRET"'
+assert_contains "$enabled_rendered" 'secretKey: "DEN_DB_ENCRYPTION_KEY"'
+assert_not_contains "$enabled_rendered" 'secretKey: "SMTP_PASS"'
+assert_not_contains "$enabled_rendered" 'secretKey: "DAYTONA_API_KEY"'
 # Remote keys resolve to pathPrefix + env key name.
 assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DATABASE_URL"'
-assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_INITIAL_ADMIN_BOOTSTRAP_CODE"'
+assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_DB_ENCRYPTION_KEY"'
 # Uniform strategies on every entry.
-assert_count "$enabled_rendered" 'conversionStrategy: Default' 20
-assert_count "$enabled_rendered" 'decodingStrategy: None' 20
-assert_count "$enabled_rendered" 'metadataPolicy: None' 20
-# Only the three boot-critical keys are required in the provider; the other 17
-# are optional so a missing optional key does not block the whole Secret.
-assert_count "$enabled_rendered" 'optional: true' 17
+assert_count "$enabled_rendered" 'conversionStrategy: Default' 3
+assert_count "$enabled_rendered" 'decodingStrategy: None' 3
+assert_count "$enabled_rendered" 'metadataPolicy: None' 3
+# remoteRef.optional does not exist in the ESO CRD; it must never render.
+assert_not_contains "$enabled_rendered" 'optional:'
+
+# optionalKeys pulls additional keys; sorted with the required three.
+optional_keys_values="$tmp_dir/optional-keys-values.yaml"
+cat > "$optional_keys_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    name: external-secrets
+    kind: ClusterSecretStore
+  pathPrefix: "eks/openwork/prod/den"
+  optionalKeys:
+    - smtpPass
+    - databaseRedisUrl
+YAML
+optional_keys_rendered="$tmp_dir/optional-keys.yaml"
+helm template openwork-ee "$chart_dir" -f "$optional_keys_values" > "$optional_keys_rendered"
+assert_count "$optional_keys_rendered" 'secretKey:' 5
+assert_contains "$optional_keys_rendered" 'secretKey: "SMTP_PASS"'
+assert_contains "$optional_keys_rendered" 'secretKey: "DATABASE_REDIS_URL"'
+assert_contains "$optional_keys_rendered" 'key: "eks/openwork/prod/den/SMTP_PASS"'
+
+# Unknown optionalKeys entries fail fast.
+bad_optional_values="$tmp_dir/bad-optional-values.yaml"
+cat > "$bad_optional_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  pathPrefix: trunk
+  optionalKeys:
+    - notARealKey
+YAML
+assert_failure "$bad_optional_values" 'externalSecrets.optionalKeys contains "notARealKey", which is not a known secret.keys.* name'
 # Target Secret keeps the chart secret name so envFrom/secretKeyRef wiring holds.
 # 7 name: occurrences: ExternalSecret metadata.name + target.name, envFrom in
 assert_count "$enabled_rendered" 'name: "openwork-ee-secret"' 7
@@ -187,7 +223,7 @@ externalSecrets:
 YAML
 strategy_rendered="$tmp_dir/strategy.yaml"
 helm template openwork-ee "$chart_dir" -f "$strategy_values" > "$strategy_rendered"
-assert_count "$strategy_rendered" 'decodingStrategy: Base64' 20
+assert_count "$strategy_rendered" 'decodingStrategy: Base64' 3
 assert_contains "$strategy_rendered" 'deletionPolicy: Delete'
 
 # Capability-aware apiVersion selection: v1 served -> v1 rendered.

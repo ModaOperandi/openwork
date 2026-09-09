@@ -160,6 +160,11 @@ external-secrets.io/v1beta1
 {{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
 {{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
 {{- end -}}
+{{- range $key := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- if not (hasKey $.Values.secret.keys $key) -}}
+{{- fail (printf "externalSecrets.optionalKeys contains %q, which is not a known secret.keys.* name" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
