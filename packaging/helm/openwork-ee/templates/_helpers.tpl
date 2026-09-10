@@ -89,6 +89,123 @@ app.kubernetes.io/component: {{ .component }}
 {{- include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- end -}}
 
+{{/*
+  Workload roll trigger for secret content. In inline mode the rendered
+  secret.yaml hash already changes with secret.values. In externalSecrets mode
+  secret.yaml renders empty, so hash the inputs that change the Secret ESO
+  materializes — the resolved key set, pathPrefix, the secretStoreRef, and the
+  conversion/decoding strategies (which change the decoded bytes). envFrom keys
+  and values are fixed at pod start, so any of these changing must roll the
+  workloads. Non-content ExternalSecret fields (refreshInterval, metadataPolicy,
+  hook annotations, target policies) are deliberately excluded so they do not
+  cause spurious rolls. existingSecret mode is operator-managed — no chart
+  values drive its content, so no trigger is possible there.
+*/}}
+{{- define "openwork-ee.secretChecksum" -}}
+{{- if eq .Values.secret.secretsMode "externalSecrets" -}}
+{{- $requiredKeys := list "databaseUrl" "betterAuthSecret" "denDbEncryptionKey" -}}
+{{- $optionalKeys := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- $resolvedKeys := list -}}
+{{- range $name := concat $requiredKeys $optionalKeys | uniq | sortAlpha -}}
+{{- $resolvedKeys = append $resolvedKeys (index $.Values.secret.keys $name) -}}
+{{- end -}}
+{{- $store := .Values.externalSecrets.secretStoreRef | default dict -}}
+{{- $input := dict
+    "keys" ($resolvedKeys | uniq | sortAlpha)
+    "pathPrefix" (.Values.externalSecrets.pathPrefix | toString | trim | trimSuffix "/")
+    "secretStoreName" ($store.name | default "")
+    "secretStoreKind" ($store.kind | default "")
+    "conversionStrategy" .Values.externalSecrets.conversionStrategy
+    "decodingStrategy" .Values.externalSecrets.decodingStrategy -}}
+{{- $input | toJson | sha256sum -}}
+{{- else -}}
+{{- include (print $.Template.BasePath "/secret.yaml") . | sha256sum -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Resolved provider key set the workloads expect in the Secret: the three
+  boot-critical keys plus opted-in optionalKeys. Drives the wait-for-secret
+  init container. Only meaningful in externalSecrets mode.
+*/}}
+{{- define "openwork-ee.expectedSecretKeys" -}}
+{{- $requiredKeys := list "databaseUrl" "betterAuthSecret" "denDbEncryptionKey" -}}
+{{- $optionalKeys := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- $resolved := list -}}
+{{- range $name := concat $requiredKeys $optionalKeys | uniq | sortAlpha -}}
+{{- $resolved = append $resolved (index $.Values.secret.keys $name) -}}
+{{- end -}}
+{{- $resolved | uniq | sortAlpha | join " " -}}
+{{- end -}}
+
+{{/*
+  Init container that blocks until the workload Secret exists and, in
+  externalSecrets mode, contains the full expected key set. envFrom imports the
+  keys present at pod start and never refreshes, so a pod that starts before
+  ESO reconciles a newly-added optional key would hold a stale env until its
+  next restart. Required keys block indefinitely (the workload cannot boot
+  without them); the optional remainder is bounded by
+  externalSecrets.optionalKeyWaitSeconds so a typo'd optional key degrades
+  (pod starts without it) rather than bricking the Deployment.
+*/}}
+{{- define "openwork-ee.waitForSecretInitContainer" -}}
+- name: wait-for-secret
+  image: "{{ .Values.migrations.kubectlImage.repository }}:{{ .Values.migrations.kubectlImage.tag }}"
+  imagePullPolicy: {{ .Values.image.pullPolicy }}
+  command:
+    - sh
+    - -c
+    - |
+        set -u
+        SECRET="{{ include "openwork-ee.secretNameRaw" . }}"
+        NS="{{ include "openwork-ee.namespaceRaw" . }}"
+        until kubectl get secret "$SECRET" -n "$NS" > /dev/null 2>&1; do
+          echo "waiting for secret $SECRET..."
+          sleep 3
+        done
+        {{- if eq .Values.secret.secretsMode "externalSecrets" }}
+        # Wait without bound for the three boot-critical keys.
+        for key in {{ include "openwork-ee.requiredSecretKeys" . }}; do
+          until kubectl get secret "$SECRET" -n "$NS" -o jsonpath="{.data.$key}" 2>/dev/null | grep -q .; do
+            echo "waiting for required key $key in secret $SECRET..."
+            sleep 3
+          done
+        done
+        # Bounded wait for the optional remainder, then proceed. Rendered
+        # directly (not via `default`) so an explicit 0 truly skips the wait —
+        # `default 60` treats numeric 0 as empty and would force 60.
+        deadline=$(( $(date +%s) + {{ .Values.externalSecrets.optionalKeyWaitSeconds }} ))
+        for key in {{ include "openwork-ee.optionalSecretKeys" . }}; do
+          while ! kubectl get secret "$SECRET" -n "$NS" -o jsonpath="{.data.$key}" 2>/dev/null | grep -q .; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "proceeding without optional key $key (waited {{ .Values.externalSecrets.optionalKeyWaitSeconds }}s)"
+              break
+            fi
+            echo "waiting for optional key $key in secret $SECRET..."
+            sleep 3
+          done
+        done
+        {{- end }}
+{{- end -}}
+
+{{/* Required provider key names (env names) in externalSecrets mode. */}}
+{{- define "openwork-ee.requiredSecretKeys" -}}
+{{- $out := list -}}
+{{- range $name := list "databaseUrl" "betterAuthSecret" "denDbEncryptionKey" -}}
+{{- $out = append $out (index $.Values.secret.keys $name) -}}
+{{- end -}}
+{{- $out | join " " -}}
+{{- end -}}
+
+{{/* Opt-in optional provider key names (env names) in externalSecrets mode. */}}
+{{- define "openwork-ee.optionalSecretKeys" -}}
+{{- $out := list -}}
+{{- range $name := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- $out = append $out (index $.Values.secret.keys $name) -}}
+{{- end -}}
+{{- $out | join " " -}}
+{{- end -}}
+
 {{- define "openwork-ee.secretsMode.validate" -}}
 {{- if not (has .Values.secret.secretsMode (list "inline" "existingSecret" "externalSecrets")) -}}
 {{- fail "secretsMode must be one of inline, existingSecret, externalSecrets" -}}
@@ -159,6 +276,11 @@ external-secrets.io/v1beta1
 {{- end -}}
 {{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
 {{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
+{{- end -}}
+{{- range $key := .Values.externalSecrets.optionalKeys | default (list) -}}
+{{- if not (hasKey $.Values.secret.keys $key) -}}
+{{- fail (printf "externalSecrets.optionalKeys contains %q, which is not a known secret.keys.* name" $key) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

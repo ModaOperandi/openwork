@@ -78,19 +78,77 @@ assert_count "$enabled_rendered" 'refreshInterval: "5m"' 1
 assert_contains "$enabled_rendered" 'creationPolicy: Owner'
 assert_contains "$enabled_rendered" 'deletionPolicy: Retain'
 assert_count "$enabled_rendered" 'dataFrom:' 0
-# spec.data rendered from secret.keys: one entry per key (20 in values.yaml).
-assert_count "$enabled_rendered" 'secretKey:' 20
-assert_contains "$enabled_rendered" 'secretKey: "DATABASE_URL'
-assert_contains "$enabled_rendered" 'secretKey: "BETTER_AUTH_SECRET'
-assert_contains "$enabled_rendered" 'secretKey: "DEN_DB_ENCRYPTION_KEY'
-assert_contains "$enabled_rendered" 'secretKey: "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE'
+# spec.data renders the three boot-critical keys only by default (ESO remoteRef
+# has no skip-if-missing, so optional keys are opt-in via optionalKeys).
+assert_count "$enabled_rendered" 'secretKey:' 3
+assert_contains "$enabled_rendered" 'secretKey: "DATABASE_URL"'
+assert_contains "$enabled_rendered" 'secretKey: "BETTER_AUTH_SECRET"'
+assert_contains "$enabled_rendered" 'secretKey: "DEN_DB_ENCRYPTION_KEY"'
+assert_not_contains "$enabled_rendered" 'secretKey: "SMTP_PASS"'
+assert_not_contains "$enabled_rendered" 'secretKey: "DAYTONA_API_KEY"'
 # Remote keys resolve to pathPrefix + env key name.
 assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DATABASE_URL"'
-assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_INITIAL_ADMIN_BOOTSTRAP_CODE"'
+assert_contains "$enabled_rendered" 'key: "eks/openwork/prod/den/DEN_DB_ENCRYPTION_KEY"'
 # Uniform strategies on every entry.
-assert_count "$enabled_rendered" 'conversionStrategy: Default' 20
-assert_count "$enabled_rendered" 'decodingStrategy: None' 20
-assert_count "$enabled_rendered" 'metadataPolicy: None' 20
+assert_count "$enabled_rendered" 'conversionStrategy: Default' 3
+assert_count "$enabled_rendered" 'decodingStrategy: None' 3
+assert_count "$enabled_rendered" 'metadataPolicy: None' 3
+# remoteRef.optional does not exist in the ESO CRD; it must never render.
+assert_not_contains "$enabled_rendered" 'optional:'
+
+# optionalKeys pulls additional keys; sorted with the required three.
+optional_keys_values="$tmp_dir/optional-keys-values.yaml"
+cat > "$optional_keys_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    name: external-secrets
+    kind: ClusterSecretStore
+  pathPrefix: "eks/openwork/prod/den"
+  optionalKeys:
+    - smtpPass
+    - databaseRedisUrl
+YAML
+optional_keys_rendered="$tmp_dir/optional-keys.yaml"
+helm template openwork-ee "$chart_dir" -f "$optional_keys_values" > "$optional_keys_rendered"
+assert_count "$optional_keys_rendered" 'secretKey:' 5
+assert_contains "$optional_keys_rendered" 'secretKey: "SMTP_PASS"'
+assert_contains "$optional_keys_rendered" 'secretKey: "DATABASE_REDIS_URL"'
+assert_contains "$optional_keys_rendered" 'key: "eks/openwork/prod/den/SMTP_PASS"'
+
+# Adding an optionalKeys entry must roll the workloads: in ESO mode secret.yaml
+# renders empty, so checksum/secret hashes the resolved key set (required +
+# optionalKeys) to change the pod template when the key set changes. envFrom
+# keys are fixed at pod start, so without this the new key never reaches pods.
+checksum_annotation() {
+  grep 'checksum/secret:' "$1" | sort -u
+}
+if [[ "$(checksum_annotation "$enabled_rendered")" == "$(checksum_annotation "$optional_keys_rendered")" ]]; then
+  printf 'Expected checksum/secret to change when optionalKeys changes\n' >&2
+  exit 1
+fi
+# Stable across renders of the same values (no spurious rolls).
+enabled_rendered_2="$tmp_dir/enabled-2.yaml"
+helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered_2"
+if [[ "$(checksum_annotation "$enabled_rendered")" != "$(checksum_annotation "$enabled_rendered_2")" ]]; then
+  printf 'Expected checksum/secret to be stable across identical renders\n' >&2
+  exit 1
+fi
+
+# Unknown optionalKeys entries fail fast.
+bad_optional_values="$tmp_dir/bad-optional-values.yaml"
+cat > "$bad_optional_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  pathPrefix: trunk
+  optionalKeys:
+    - notARealKey
+YAML
+assert_failure "$bad_optional_values" 'externalSecrets.optionalKeys contains "notARealKey", which is not a known secret.keys.* name'
 # Target Secret keeps the chart secret name so envFrom/secretKeyRef wiring holds.
 # 7 name: occurrences: ExternalSecret metadata.name + target.name, envFrom in
 assert_count "$enabled_rendered" 'name: "openwork-ee-secret"' 7
@@ -99,9 +157,33 @@ assert_count "$enabled_rendered" 'secretKeyRef:' 2
 # failing on a missing one, and the ExternalSecret applies before the Job
 # (hook weight -10 precedes the Job's -5).
 assert_contains "$enabled_rendered" 'name: wait-for-secret'
-assert_contains "$enabled_rendered" 'until kubectl get secret openwork-ee-secret'
+# Workloads + migration Job all get the wait initContainer in ESO mode (inference
+# is off by default): den-api, den-web, migrate Job.
+assert_count "$enabled_rendered" 'name: wait-for-secret' 3
+assert_contains "$enabled_rendered" 'until kubectl get secret "$SECRET" -n "$NS"'
+# Workloads run under the dedicated SA so the initContainer can read the Secret.
+assert_count "$enabled_rendered" 'serviceAccountName: openwork-ee-workload' 2
 assert_contains "$enabled_rendered" 'image: "bitnami/kubectl:1.33.4"'
 assert_not_contains "$enabled_rendered" 'kubectl:latest'
+# Default optional-key wait is 60s.
+assert_contains "$enabled_rendered" '+ 60 ))'
+
+# optionalKeyWaitSeconds: 0 must render 0, not be coerced to the 60s default
+# (Helm `default` treats numeric 0 as empty).
+zero_wait_values="$tmp_dir/zero-wait-values.yaml"
+cat > "$zero_wait_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  pathPrefix: trunk
+  optionalKeys: [smtpPass]
+  optionalKeyWaitSeconds: 0
+YAML
+zero_wait_rendered="$tmp_dir/zero-wait.yaml"
+helm template openwork-ee "$chart_dir" -f "$zero_wait_values" > "$zero_wait_rendered"
+assert_contains "$zero_wait_rendered" '+ 0 ))'
+assert_not_contains "$zero_wait_rendered" '+ 60 ))'
 
 # Whitespace is trimmed at render, matching validation: a padded store name,
 # prefix, and existingSecret render trimmed rather than failing or embedding
@@ -133,8 +215,12 @@ secret:
 YAML
 padded_existing_rendered="$tmp_dir/padded-existing.yaml"
 helm template openwork-ee "$chart_dir" -f "$padded_existing_values" > "$padded_existing_rendered"
-assert_count "$padded_existing_rendered" 'name: padded-secret' 5
+assert_count "$padded_existing_rendered" 'name: "padded-secret"' 5
 assert_not_contains "$padded_existing_rendered" '  padded-secret'
+
+# Hook ordering for the migration chain: Namespace (-11) -> ExternalSecret
+# (-10) -> migration RBAC (-6) -> migration Job (-5).
+assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-11"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1
@@ -184,7 +270,7 @@ externalSecrets:
 YAML
 strategy_rendered="$tmp_dir/strategy.yaml"
 helm template openwork-ee "$chart_dir" -f "$strategy_values" > "$strategy_rendered"
-assert_count "$strategy_rendered" 'decodingStrategy: Base64' 20
+assert_count "$strategy_rendered" 'decodingStrategy: Base64' 3
 assert_contains "$strategy_rendered" 'deletionPolicy: Delete'
 
 # Capability-aware apiVersion selection: v1 served -> v1 rendered.
@@ -392,6 +478,6 @@ YAML
 helm template openwork-ee "$chart_dir" -f "$tmp_dir/existing-values.yaml" > "$existing_rendered"
 assert_count "$existing_rendered" 'kind: Secret' 0
 assert_count "$existing_rendered" 'kind: ExternalSecret' 0
-assert_count "$existing_rendered" 'name: manually-managed' 5
+assert_count "$existing_rendered" 'name: "manually-managed"' 5
 
 printf 'external-secrets chart checks passed\n'

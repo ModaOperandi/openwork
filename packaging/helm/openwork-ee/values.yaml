@@ -243,9 +243,11 @@ secret:
 # materializes the workload Secret from the provider. Requires ESO and a
 # SecretStore/ClusterSecretStore on the destination cluster.
 externalSecrets:
-  # ATTENTION: every secret.keys.* value the workloads consume must exist as
-  # a JSON property in your provider under pathPrefix — the chart pulls each
-  # key by name from <pathPrefix>/<KEY_NAME> and cannot invent missing ones.
+  # ATTENTION: the three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
+  # DEN_DB_ENCRYPTION_KEY) and every key you list under optionalKeys must exist
+  # in your provider under pathPrefix — the chart pulls each rendered key by
+  # name from <pathPrefix>/<KEY_NAME> and a missing rendered key fails the
+  # ExternalSecret. Keys you neither need nor list are not pulled.
   # How often ESO re-syncs the Secret from the provider.
   refreshInterval: 1h
   # Store holding the remote keys. For AWS Secrets Manager the store's
@@ -263,13 +265,29 @@ externalSecrets:
     creationPolicy: Owner
     # Retain keeps the Secret if the ExternalSecret is deleted.
     deletionPolicy: Retain
-  # Remote path trunk: every secret.keys.* value (DATABASE_URL,
-  # BETTER_AUTH_SECRET, ...) is pulled from <pathPrefix>/<KEY_NAME>. The
-  # chart renders spec.data from secret.keys, so the key list here can never
-  # drift from what the workloads consume.
+  # Remote path trunk: keys are pulled from <pathPrefix>/<KEY_NAME>. The chart
+  # renders spec.data for the three boot-critical keys (DATABASE_URL,
+  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus the entries explicitly
+  # selected in optionalKeys. The optional list is opt-in and maintained by
+  # hand — if a future feature starts consuming a new secret key, add its
+  # secret.keys.* name to optionalKeys and create the provider entry.
   # REQUIRED when secretsMode: externalSecrets (render fails if blank).
   # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
   pathPrefix: ""
+  # Optional keys to also pull from the provider. Entries are secret.keys
+  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
+  # path and target Secret key use the corresponding value (SMTP_PASS).
+  # Only listed keys get a spec.data entry — ESO's remoteRef has no "skip if
+  # missing", so keys you do not list here need not exist in the provider and
+  # simply do not land in the Secret.
+  optionalKeys: []
+  # Seconds the workload init container waits for an optional key to appear in
+  # the materialized Secret before starting without it. envFrom snapshots keys
+  # at pod start, so a pod that boots before ESO reconciles a newly added
+  # optional key would otherwise hold a stale environment until its next
+  # restart. Required keys always block indefinitely. Set 0 to skip waiting
+  # for optional keys entirely.
+  optionalKeyWaitSeconds: 60
   # Strategy fields applied uniformly to every pulled key (ESO defaults,
   # matching the external-secrets.io/v1 schema).
   conversionStrategy: Default
