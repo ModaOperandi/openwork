@@ -335,9 +335,10 @@ provider in-cluster:
 
 The chart renders `spec.data` — the oldest stable ESO shape, unchanged since
 `external-secrets.io/v1beta1` — pulling keys from `<pathPrefix>/<KEY_NAME>` in
-the provider. Only the three boot-critical keys (`DATABASE_URL`,
-`BETTER_AUTH_SECRET`, `DEN_DB_ENCRYPTION_KEY`) are rendered by default; add
-more by name via `optionalKeys`:
+the provider by default (`externalSecrets.keyLayout: perKey`). Only the three
+boot-critical keys (`DATABASE_URL`, `BETTER_AUTH_SECRET`,
+`DEN_DB_ENCRYPTION_KEY`) are rendered by default; add more by name via
+`optionalKeys`:
 
 ```yaml
 secret:
@@ -366,6 +367,24 @@ externalSecrets:
     - smtpSecure
 ```
 
+If your provider instead stores one combined secret per service (a single
+entry holding a JSON object of key/value pairs, e.g. an AWS Secrets Manager
+entry named `eks/<project>/<env>/<service>`) rather than one entry per key, set
+`externalSecrets.keyLayout: singleSecret`. `pathPrefix` then names that single
+secret directly, and each key is read from its same-named JSON property inside
+it instead of from `<pathPrefix>/<KEY_NAME>`:
+
+```yaml
+externalSecrets:
+  pathPrefix: "eks/openwork/prod/den"
+  keyLayout: singleSecret
+```
+
+With `keyLayout: singleSecret`, the provider secret at `eks/openwork/prod/den`
+must be a JSON object such as
+`{"DATABASE_URL": "...", "BETTER_AUTH_SECRET": "...", "DEN_DB_ENCRYPTION_KEY": "..."}`,
+plus any `optionalKeys` properties you list.
+
 The three required keys must exist in your provider under `pathPrefix` — a
 missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
 "skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
@@ -388,6 +407,7 @@ the materialized Secret. ESO must be installed on the destination cluster with
 a `SecretStore`/`ClusterSecretStore`; the chart selects
 `external-secrets.io/v1` or `v1beta1` from cluster capabilities and fails
 loudly at sync time if the CRDs are missing.
+
 
 Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 

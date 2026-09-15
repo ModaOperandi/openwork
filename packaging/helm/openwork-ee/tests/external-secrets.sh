@@ -118,6 +118,47 @@ assert_contains "$optional_keys_rendered" 'secretKey: "SMTP_PASS"'
 assert_contains "$optional_keys_rendered" 'secretKey: "DATABASE_REDIS_URL"'
 assert_contains "$optional_keys_rendered" 'key: "eks/openwork/prod/den/SMTP_PASS"'
 
+# keyLayout: singleSecret pulls every key as a property of one combined
+# provider secret named exactly pathPrefix, instead of one provider secret per
+# key — the convention used when a provider stores one JSON secret per
+# service (e.g. AWS Secrets Manager entries like eks/<project>/<env>/<service>).
+single_secret_values="$tmp_dir/single-secret-values.yaml"
+cat > "$single_secret_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    name: external-secrets
+    kind: ClusterSecretStore
+  pathPrefix: "eks/openwork/dev/den"
+  keyLayout: singleSecret
+YAML
+single_secret_rendered="$tmp_dir/single-secret.yaml"
+helm template openwork-ee "$chart_dir" -f "$single_secret_values" > "$single_secret_rendered"
+assert_count "$single_secret_rendered" 'secretKey:' 3
+# Every remoteRef.key is the bare pathPrefix (the single combined secret name);
+# the per-key path suffix from the default layout must not appear.
+assert_count "$single_secret_rendered" 'key: "eks/openwork/dev/den"' 3
+assert_not_contains "$single_secret_rendered" 'key: "eks/openwork/dev/den/'
+assert_contains "$single_secret_rendered" 'property: "BETTER_AUTH_SECRET"'
+assert_contains "$single_secret_rendered" 'property: "DATABASE_URL"'
+assert_contains "$single_secret_rendered" 'property: "DEN_DB_ENCRYPTION_KEY"'
+# perKey (the default) never renders remoteRef.property.
+assert_not_contains "$enabled_rendered" 'property:'
+
+# Unknown keyLayout values fail fast.
+bad_layout_values="$tmp_dir/bad-layout-values.yaml"
+cat > "$bad_layout_values" <<'YAML'
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  pathPrefix: trunk
+  keyLayout: everythingInOneEnvVar
+YAML
+assert_failure "$bad_layout_values" 'externalSecrets.keyLayout must be perKey or singleSecret'
+
 # Adding an optionalKeys entry must roll the workloads: in ESO mode secret.yaml
 # renders empty, so checksum/secret hashes the resolved key set (required +
 # optionalKeys) to change the pod template when the key set changes. envFrom
@@ -134,6 +175,11 @@ enabled_rendered_2="$tmp_dir/enabled-2.yaml"
 helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered_2"
 if [[ "$(checksum_annotation "$enabled_rendered")" != "$(checksum_annotation "$enabled_rendered_2")" ]]; then
   printf 'Expected checksum/secret to be stable across identical renders\n' >&2
+  exit 1
+fi
+# keyLayout participates in the roll-trigger checksum, matching pathPrefix.
+if [[ "$(checksum_annotation "$enabled_rendered")" == "$(checksum_annotation "$single_secret_rendered")" ]]; then
+  printf 'Expected checksum/secret to change when keyLayout changes\n' >&2
   exit 1
 fi
 

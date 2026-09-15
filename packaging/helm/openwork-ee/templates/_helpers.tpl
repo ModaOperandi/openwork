@@ -112,6 +112,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- $store := .Values.externalSecrets.secretStoreRef | default dict -}}
 {{- $input := dict
     "keys" ($resolvedKeys | uniq | sortAlpha)
+    "keyLayout" .Values.externalSecrets.keyLayout
     "pathPrefix" (.Values.externalSecrets.pathPrefix | toString | trim | trimSuffix "/")
     "secretStoreName" ($store.name | default "")
     "secretStoreKind" ($store.kind | default "")
@@ -276,6 +277,9 @@ external-secrets.io/v1beta1
 {{- end -}}
 {{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
 {{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
+{{- end -}}
+{{- if not (has .Values.externalSecrets.keyLayout (list "perKey" "singleSecret")) -}}
+{{- fail "externalSecrets.keyLayout must be perKey or singleSecret" -}}
 {{- end -}}
 {{- range $key := .Values.externalSecrets.optionalKeys | default (list) -}}
 {{- if not (hasKey $.Values.secret.keys $key) -}}

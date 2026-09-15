@@ -265,14 +265,28 @@ externalSecrets:
     creationPolicy: Owner
     # Retain keeps the Secret if the ExternalSecret is deleted.
     deletionPolicy: Retain
-  # Remote path trunk: keys are pulled from <pathPrefix>/<KEY_NAME>. The chart
-  # renders spec.data for the three boot-critical keys (DATABASE_URL,
-  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus the entries explicitly
-  # selected in optionalKeys. The optional list is opt-in and maintained by
-  # hand — if a future feature starts consuming a new secret key, add its
-  # secret.keys.* name to optionalKeys and create the provider entry.
+  # How keys map onto provider entries. "perKey" (default) pulls one provider
+  # secret per env var, named <pathPrefix>/<KEY_NAME> — see pathPrefix below.
+  # "singleSecret" instead pulls every key as a JSON property of one combined
+  # provider secret named exactly pathPrefix — use this when your provider
+  # stores one secret per service (e.g. AWS Secrets Manager entries like
+  # eks/<project>/<env>/<service> holding a JSON object of key/value pairs)
+  # rather than one entry per key.
+  keyLayout: perKey
+  # Remote path trunk. In keyLayout: perKey, keys are pulled from
+  # <pathPrefix>/<KEY_NAME>. In keyLayout: singleSecret, pathPrefix is instead
+  # the exact name of the single combined secret and each key is read from its
+  # same-named JSON property inside it. The chart renders spec.data for the
+  # three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
+  # DEN_DB_ENCRYPTION_KEY) plus the entries explicitly selected in
+  # optionalKeys. The optional list is opt-in and maintained by hand — if a
+  # future feature starts consuming a new secret key, add its secret.keys.*
+  # name to optionalKeys and create the provider entry.
   # REQUIRED when secretsMode: externalSecrets (render fails if blank).
-  # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
+  # Example (AWS Secrets Manager, perKey): pathPrefix: "eks/openwork/prod/den"
+  # Example (AWS Secrets Manager, singleSecret): the same pathPrefix, but
+  # eks/openwork/prod/den is itself one secret holding
+  # {"DATABASE_URL": "...", "BETTER_AUTH_SECRET": "...", ...}.
   pathPrefix: ""
   # Optional keys to also pull from the provider. Entries are secret.keys
   # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
