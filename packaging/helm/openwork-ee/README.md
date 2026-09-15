@@ -16,6 +16,8 @@ Published releases are available as an OCI Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version REPLACE_OPENWORK_VERSION \
+  --namespace openwork \
+  --create-namespace \
   -f values.prod.yaml
 ```
 
@@ -202,7 +204,10 @@ For local development from a repository checkout, render or install directly:
 
 ```bash
 helm template openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
+helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  -f values.prod.yaml
 ```
 
 ### Automations rollout
