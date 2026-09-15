@@ -25,16 +25,15 @@
   `syncOptions: [CreateNamespace=true]` — a native, non-hook, one-time
   operation with no delete-then-recreate lifecycle.
 
-  For a genuine (non-ArgoCD) `helm install`/`helm upgrade` CLI run with the
-  default migrations.hook=true, lookup has real cluster access, so this guard
-  behaves as intended: first install renders the Namespace as the earliest
-  hook (weight -11, preceding the ExternalSecret's -10), then every
-  subsequent `helm upgrade` sees the namespace already exists and skips
-  rendering it, never re-entering the hook path (and therefore never hitting
-  the before-hook-creation default) at all. helm uninstall does not remove
-  hook resources, so the Namespace outlives the release even in that path
-  (intentional — deleting it would cascade to any externally-created
-  resources in it).
+  For a genuine (non-ArgoCD) `helm install`/`helm upgrade` CLI run, lookup has
+  real cluster access, so this guard behaves as intended: first install
+  renders the Namespace as the earliest hook (weight -11, preceding the
+  ExternalSecret's -10), then every subsequent `helm upgrade` sees the
+  namespace already exists and skips rendering it, never re-entering the
+  hook path (and therefore never hitting the before-hook-creation default) at
+  all. helm uninstall does not remove hook resources, so the Namespace
+  outlives the release even in that path (intentional — deleting it would
+  cascade to any externally-created resources in it).
 
   This does NOT let a first install skip pre-provisioning the *release*
   namespace itself (the one passed via `helm install --namespace`): Helm
@@ -46,47 +45,48 @@
   release itself lives in (which must already exist, or be created via
   --create-namespace, some other way).
 
-  The lookup-skip trick above only applies while this renders as a hook.
-  With migrations.hook=false the Namespace instead renders as a plain,
-  non-hook manifest — and Helm does NOT exempt plain resources from release
-  tracking the way it does hooks ("hook resources are not managed with
-  corresponding releases", per Helm's docs; ordinary resources are). If the
-  same lookup-and-skip-once-it-exists logic were applied there too, the first
-  `helm install` would render it once (tracked as part of the release), and
-  every subsequent `helm upgrade` would then omit it (lookup finds it) —
-  which Helm reads as "this resource was removed from the chart" and deletes
-  it, cascading the same way. So the branch below only ever gates the
-  cluster-scoped lookup — and the create-vs-skip decision it drives — behind
-  migrations.hook: in hook mode, skip once it exists; in plain-manifest mode,
-  always render it (a plain Namespace apply is naturally idempotent, a no-op
-  patch when unchanged, so there is no cost to never skipping it).
+  This rendering is intentionally independent of migrations.hook — the
+  Namespace is always a hook whenever createNamespace is true, even when
+  migrations.hook=false leaves the ExternalSecret/migration RBAC/migration
+  Job as plain manifests. Toggling the SAME resource between a hook and a
+  plain manifest across upgrades is unsafe in both directions, confirmed
+  empirically against a live cluster: hook -> plain fails outright (a
+  hook-created resource never receives Helm's release-ownership labels, so
+  presenting it as an ordinary resource in a later release makes Helm refuse
+  to adopt it — "exists and cannot be imported into the current release:
+  invalid ownership metadata" — hard-failing the upgrade); and even where
+  plain -> hook does not hard-fail, it depends entirely on this exact
+  resource-policy: keep annotation already having been stamped onto the live
+  object by a prior release using this same fix, which cannot be assumed for
+  a release from before this file supported non-hook rendering at all. Tying
+  the Namespace's hook-ness to a value meant only to help debug the migration
+  Job's logs was never a deliberate design goal, so it no longer varies with
+  migrations.hook at all.
 
-  Defense in depth, on top of the above: every branch below also carries
-  `helm.sh/resource-policy: keep`. Helm's own docs are explicit that this
-  "instructs Helm to skip deleting this resource when a helm operation (such
-  as helm uninstall, helm upgrade or helm rollback) would result in its
-  deletion" — i.e. unlike the hook-exemption this chart otherwise relies on,
-  it is not conditional on how the resource is currently classified, so it
-  also covers transitions the logic above cannot: flipping migrations.hook
-  across an upgrade (plain-tracked one release, hook-and-lookup-skipped the
-  next — the skip would otherwise read as "removed" to Helm), and any
-  pre-existing release from before this file supported non-hook rendering at
-  all, where the Namespace may already be a plain tracked resource in Helm's
-  stored release history for reasons this template can no longer see or
-  control. The trade-off, per Helm's docs: the Namespace becomes "orphaned"
-  the moment such a transition happens — Helm stops actively managing it
-  (no more label updates from this chart) — but it is never destructively
-  deleted. That is the correct trade for a resource whose deletion cascades
-  to the entire release.
+  Defense in depth on top of all of the above: the Namespace also always
+  carries `helm.sh/resource-policy: keep`. Helm's own docs are explicit that
+  this "instructs Helm to skip deleting this resource when a helm operation
+  (such as helm uninstall, helm upgrade or helm rollback) would result in its
+  deletion" — checked against the *live* object's current annotations, not
+  the newly-rendered manifest (confirmed empirically: a release stops
+  rendering this Namespace at all in a later upgrade, and the live object —
+  already carrying this annotation from an earlier release — survives
+  regardless). This protects any release already running this fix through
+  future changes this template cannot anticipate. It does NOT protect a
+  release upgrading directly from a chart version that predates this file
+  ever adding the annotation, if that upgrade also causes the Namespace to
+  stop being tracked (e.g. createNamespace flipping to its new false default
+  for a release that had migrations.hook=false and never pinned
+  createNamespace explicitly) — the live object in that case was never
+  stamped with `keep` by any release, so nothing in this file can retroactively
+  protect it. See the chart's release notes for that one-time migration
+  case; it needs an operator-side precaution (e.g. `kubectl annotate
+  namespace <ns> helm.sh/resource-policy=keep`) taken before upgrading, not a
+  template-side fix, since the danger is rooted entirely in what a prior,
+  already-applied release recorded, which this template has no way to see.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
-{{- if .Values.createNamespace }}
-{{- if .Values.migrations.hook }}
-{{- /*
-  Gate the cluster-scoped lookup behind migrations.hook too: restricted-RBAC
-  helm install/upgrade (no get on cluster Namespaces) can still use the
-  always-render plain-manifest path below without needing that permission.
-*/ -}}
+{{- if .Values.createNamespace -}}
 {{- $existing := lookup "v1" "Namespace" "" $namespaceName -}}
 {{- if not $existing }}
 apiVersion: v1
@@ -98,16 +98,6 @@ metadata:
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-11"
-    "helm.sh/resource-policy": keep
-{{- end }}
-{{- else }}
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ include "openwork-ee.namespace" . }}
-  labels:
-    {{- include "openwork-ee.labels" . | nindent 4 }}
-  annotations:
     "helm.sh/resource-policy": keep
 {{- end }}
 {{- end }}

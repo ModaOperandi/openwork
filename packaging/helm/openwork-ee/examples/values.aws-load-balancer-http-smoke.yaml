@@ -14,6 +14,11 @@
 # hostnames, run helm upgrade again, and then validate browser auth. Prefer the
 # HTTPS/ACM example for production.
 
+# Must match the --namespace above: with createNamespace at its chart default
+# (false), nothing else creates this namespace, and --create-namespace only
+# creates the one the Helm release itself lives in.
+namespace: openwork-ee
+
 image:
   tag: "REPLACE_OPENWORK_VERSION"
   pullPolicy: IfNotPresent

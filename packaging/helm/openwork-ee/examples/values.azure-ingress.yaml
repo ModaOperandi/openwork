@@ -14,6 +14,11 @@
 # add-on's managed NGINX Ingress controller. Use it for production-like Azure
 # tests where browser auth and SSO need stable HTTPS hostnames.
 
+# Must match the --namespace above: with createNamespace at its chart default
+# (false), nothing else creates this namespace, and --create-namespace only
+# creates the one the Helm release itself lives in.
+namespace: openwork-ee
+
 image:
   tag: "REPLACE_OPENWORK_VERSION"
   pullPolicy: IfNotPresent

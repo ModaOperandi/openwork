@@ -107,20 +107,23 @@ assert_contains "$opt_in_rendered" 'helm.sh/resource-policy": keep'
 # a plain (non-hook) manifest.
 nohook_rendered="$tmp_dir/nohook.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
+# Regression: the Namespace's hook-ness is decoupled from migrations.hook —
+# toggling that value across upgrades to move the SAME resource between a
+# hook and a plain manifest is unsafe in both directions, confirmed
+# empirically against a live cluster: hook -> plain hard-fails the upgrade
+# outright ("exists and cannot be imported into the current release: invalid
+# ownership metadata", since a hook-created resource never receives Helm's
+# release-ownership labels), and plain -> hook depends entirely on
+# resource-policy: keep already having been stamped onto the live object by
+# a prior release, which cannot be assumed for one predating this fix. So it
+# must still render exactly as the createNamespace=true/migrations.hook=true
+# case above — same hook annotations, same resource-policy: keep — even with
+# migrations.hook=false, which now only affects the ExternalSecret/migration
+# RBAC/migration Job hooks.
 assert_count "$nohook_rendered" 'kind: Namespace' 1
-assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
+assert_contains "$nohook_rendered" 'helm.sh/hook-weight": "-11"'
 assert_contains "$nohook_rendered" 'helm.sh/resource-policy": keep'
-# Regression: the plain-manifest Namespace must render unconditionally here
-# (no lookup-gated skip), never carrying any helm.sh/hook annotation. Helm
-# exempts hook resources from release-manifest tracking/pruning ("hook
-# resources are not managed with corresponding releases") but NOT plain
-# resources — if this path reused the hook path's lookup-and-skip-once-
-# existing trick, the first `helm install` would render (and track) it once,
-# then every later `helm upgrade` would omit it because lookup finds it,
-# which Helm reads as "removed from the chart" and deletes — cascading
-# everything in the namespace, on the *second* upgrade of a perfectly normal,
-# supported migrations.hook=false configuration.
-assert_not_contains "$nohook_rendered" '"helm.sh/hook": pre-install'
+assert_namespace_hook_safe "$nohook_rendered"
 
 # createNamespace=false (the default, set explicitly here) skips the
 # Namespace object entirely (out-of-band provisioning, e.g. --create-namespace

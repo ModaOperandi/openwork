@@ -171,17 +171,31 @@ This is a native, non-hook, one-time ArgoCD operation with no delete-then-recrea
 lifecycle, so the namespace (and everything in it) is created once and then
 left alone by subsequent syncs.
 
-As defense in depth on top of the lookup-based guard above, the rendered
-Namespace also always carries `helm.sh/resource-policy: keep`. Helm's docs
-state plainly that this "instructs Helm to skip deleting this resource when a
-helm operation (such as `helm uninstall`, `helm upgrade` or `helm rollback`)
-would result in its deletion" — this covers transitions the guard above
-cannot, such as toggling `migrations.hook` across upgrades (see "Migrations"
-below) or a pre-existing release from before this chart supported non-hook
-Namespace rendering. If such a transition ever does occur, the Namespace is
-orphaned (Helm stops actively managing it, so future label changes from this
-chart stop applying) rather than deleted — the correct trade-off for a
-resource whose deletion cascades to the entire release.
+The Namespace's hook-ness does not vary with `migrations.hook` (see
+"Migrations" below): it is always a hook whenever `createNamespace` is true.
+Toggling the *same* resource between a hook and a plain manifest across
+upgrades is unsafe in both directions — confirmed against a live cluster,
+hook -> plain hard-fails the upgrade outright (`exists and cannot be
+imported into the current release: invalid ownership metadata`, since a
+hook-created resource never receives Helm's release-ownership labels) — so
+this chart never does it.
+
+As further defense in depth, the rendered Namespace also always carries
+`helm.sh/resource-policy: keep`. Helm's docs state plainly that this
+"instructs Helm to skip deleting this resource when a helm operation (such as
+`helm uninstall`, `helm upgrade` or `helm rollback`) would result in its
+deletion" (checked against the *live* object's current annotations, not the
+newly-rendered manifest, so it protects any release already running this fix
+through changes this file cannot anticipate). It does **not** protect a
+release upgrading directly from a chart version that predates this
+annotation, if that upgrade also stops the Namespace from being rendered
+(e.g. `createNamespace` flipping to its new `false` default for a release
+that had `migrations.hook: false` and never pinned `createNamespace`
+explicitly) — the live object in that case was never stamped with `keep` by
+any release. That one-time migration case needs an operator-side precaution
+before upgrading (e.g. `kubectl annotate namespace <ns>
+helm.sh/resource-policy=keep`), not a template-side fix, since the danger is
+rooted entirely in what a prior, already-applied release recorded.
 
 ### Upgrade note: public URL values
 
@@ -1104,6 +1118,11 @@ deleting a Namespace cascades to everything inside it — see "Namespace
 creation under ArgoCD" above for why that one needs a different fix entirely
 (`createNamespace: false` plus ArgoCD's own `syncOptions: [CreateNamespace=true]`),
 not an annotation choice.
+
+`migrations.hook` only ever affects the ExternalSecret, migration RBAC, and
+migration Job above — it never affects the Namespace (see "Namespace creation
+under ArgoCD"), which is always a hook whenever `createNamespace` is true,
+independent of this value.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:
