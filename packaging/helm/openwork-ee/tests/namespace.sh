@@ -41,8 +41,17 @@ assert_count "$default_rendered" '  namespace: "kube-system"' 0
 # resources (ExternalSecret, migration RBAC/Job) are namespaced and would
 # otherwise be created before a normal-manifest Namespace exists.
 assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
-# The Namespace hook must never carry before-hook-creation: a hook re-run
-# would delete and recreate the Namespace, cascade-deleting everything in it.
+# The rendered Namespace hook must never carry an explicit hook-delete-policy
+# annotation: an explicit before-hook-creation would be no different from the
+# Helm/Argo CD default for an unannotated hook (both explicitly document
+# that before-hook-creation is what applies when no policy is set) — but
+# omitting it keeps the door open for genuine (non-ArgoCD) `helm install`/
+# `helm upgrade` runs, where the lookup() guard above has real cluster access
+# and skips rendering this hook at all once the namespace exists, so the
+# dangerous default is never reached in that path. It IS reached on every
+# ArgoCD sync (lookup() always returns empty there) — ArgoCD deployments must
+# set createNamespace=false and use `syncOptions: [CreateNamespace=true]`
+# instead; see the long comment atop templates/namespace.yaml.
 # (The env-probe test Job legitimately uses before-hook-creation, so scope the
 # check to the Namespace document.)
 assert_namespace_hook_safe() {
@@ -55,8 +64,8 @@ assert_namespace_hook_safe() {
     elif [[ "$line" == '---' ]]; then
       in_ns=0
     fi
-    if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'*'before-hook-creation'* ]]; then
-      printf 'Namespace must not use before-hook-creation (cascade-deletes contents on re-run)\n' >&2
+    if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'* ]]; then
+      printf 'Namespace must not carry an explicit hook-delete-policy annotation\n' >&2
       return 1
     fi
   done < "$file"

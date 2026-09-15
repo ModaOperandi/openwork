@@ -112,6 +112,44 @@ When applying rendered manifests directly, create the namespace first
 (`kubectl create namespace openwork`) since Helm does not create it for you in
 that flow.
 
+### Namespace creation under ArgoCD
+
+`createNamespace` (default `true`) controls whether the chart renders its own
+`Namespace` object, as the earliest `pre-install,pre-upgrade` hook so a
+first-time install into a fresh namespace works without pre-provisioning it.
+For a genuine `helm install`/`helm upgrade` CLI run this is safe: the chart
+uses Helm's `lookup` function to detect an already-existing namespace and
+skips rendering the hook entirely on every upgrade after the first install.
+
+**This safety check does not work under ArgoCD.** ArgoCD renders charts with
+`helm template` in its repo-server, which has no live cluster connection, so
+`lookup` always returns empty there — the Namespace hook renders on every
+single sync, unconditionally. Helm and ArgoCD both document that a hook
+without an explicit `hook-delete-policy` defaults to `before-hook-creation`
+(delete the previous resource, then create a new one), and deleting a
+Namespace cascades to delete everything inside it. Left on its default,
+`createNamespace: true` under ArgoCD means the **entire release** —
+Deployments, Secrets, everything — gets torn down and rebuilt on every sync.
+
+Set `createNamespace: false` for any ArgoCD `Application` and instead let
+ArgoCD create the namespace itself:
+
+```yaml
+# Application values
+createNamespace: false
+```
+
+```yaml
+# Application spec
+syncPolicy:
+  syncOptions:
+    - CreateNamespace=true
+```
+
+This is a native, non-hook, one-time ArgoCD operation with no delete-then-recreate
+lifecycle, so the namespace (and everything in it) is created once and then
+left alone by subsequent syncs.
+
 ### Upgrade note: public URL values
 
 Current chart versions make `config.public.webOrigin` the primary public URL.
@@ -1018,10 +1056,18 @@ delete tried to clear it — and if that delete raced ArgoCD's own automated-syn
 retry timing, the Job (and, via ArgoCD's `hook-finalizer`, the namespace behind
 it) could get stuck `Terminating` indefinitely. `hook-failed` deletes it
 immediately instead, well clear of the next sync attempt. The migration RBAC
-(`ServiceAccount`/`Role`/`RoleBinding`) and the `ExternalSecret` hooks carry no
-delete policy at all for the same class of reason: they are fully idempotent,
-so `before-hook-creation`'s delete-then-create would only add a race for no
-benefit — ordering via `helm.sh/hook-weight` alone is enough.
+(`ServiceAccount`/`Role`/`RoleBinding`) and the `ExternalSecret` hooks also
+carry `before-hook-creation` explicitly — Helm and ArgoCD both document that
+this is the default applied to any hook without an explicit
+`hook-delete-policy` anyway, so leaving it off would not change behavior, only
+leave it undocumented. It is tolerable for these leaf, non-cascading resources
+(no finalizers, so the delete completes essentially instantly, and the
+ExternalSecret's `target.deletionPolicy: Retain` protects the materialized
+Secret regardless). It is *not* tolerable for the Namespace hook, because
+deleting a Namespace cascades to everything inside it — see "Namespace
+creation under ArgoCD" above for why that one needs a different fix entirely
+(`createNamespace: false` plus ArgoCD's own `syncOptions: [CreateNamespace=true]`),
+not an annotation choice.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:

@@ -5,15 +5,16 @@
   mode. In hook mode these must be hooks with an earlier weight than the Job
   (-6 precedes the Job's -5) so they exist before it starts.
 
-  No hook-delete-policy here (unlike the Job): a ServiceAccount/Role/
-  RoleBinding is fully idempotent RBAC state with no run history to reset, so
-  it only needs to exist before the Job starts, not be deleted and recreated
-  on every sync. before-hook-creation would instead race ArgoCD's own
-  delete-then-create sequencing on automated-sync retries — a delete that
-  hasn't fully propagated before the following create attempt reports
-  "already exists" and fails the whole sync, sometimes indefinitely. Ordering
-  via hook-weight alone, applied in place like a normal manifest, avoids that
-  race entirely.
+  before-hook-creation is explicit here even though it is also Helm's and
+  Argo CD's documented default for an unannotated hook (Argo CD: "if no
+  deletion policy is specified, Argo CD will automatically assume
+  BeforeHookCreation rules") — omitting the annotation does not disable
+  delete-then-create, it renders it implicitly. That default is tolerable for
+  these three: they are leaf, non-cascading RBAC objects with no finalizers,
+  so the delete completes near-instantly and the following create rarely (if
+  ever) collides. Contrast the Namespace hook (templates/namespace.yaml),
+  where the very same default is dangerous because deleting it cascades to
+  every resource inside — see that file's comment for the real mitigation.
 */}}
 {{- /* Runs the legacy create=false shim before the secretsMode check below. */}}
 {{- include "openwork-ee.secretsMode.validate" . }}
@@ -30,6 +31,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -43,6 +45,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
   {{- end }}
 rules:
   - apiGroups: [""]
@@ -61,6 +64,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
   {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io

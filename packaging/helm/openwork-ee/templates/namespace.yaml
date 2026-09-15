@@ -1,19 +1,40 @@
 {{- /*
-  lookup returns empty under helm template / ArgoCD repo-server rendering, so
-  GitOps flows still get the Namespace manifest; a live helm install/upgrade
-  skips it when the namespace already exists, avoiding AlreadyExists failures
-  against pre-provisioned namespaces.
+  ⚠️ ArgoCD/GitOps operators: set createNamespace=false and instead add
+  `syncOptions: [CreateNamespace=true]` to the Application. Do not leave
+  createNamespace=true under ArgoCD — see why below.
 
-  When migrations run as pre-install/pre-upgrade hooks, the hook chain
-  (ExternalSecret, migration RBAC, migration Job) is applied before normal
-  manifests — so a first-time install into a fresh namespace would create
-  namespaced hook resources before the Namespace exists. Render the Namespace
-  as the earliest hook (weight -11, preceding the ExternalSecret's -10) in
-  that case so the whole install proceeds without pre-provisioning. A hook
-  Namespace is cluster-scoped and immediately ready, so hook completion is
-  not delayed. helm uninstall does not remove hook resources, so the
-  Namespace outlives the release (intentional — deleting it would cascade to
-  any externally-created resources in it).
+  lookup returns empty under helm template / ArgoCD repo-server rendering (no
+  live cluster connection during rendering), so `not $existing` below is
+  always true there regardless of whether the namespace already exists. That
+  means under ArgoCD this Namespace unconditionally renders as a hook on
+  every single sync — and, same as any Helm/Argo CD hook with no explicit
+  hook-delete-policy, it defaults to before-hook-creation (Argo CD: "if no
+  deletion policy is specified, Argo CD will automatically assume
+  BeforeHookCreation rules"; Helm's docs state the identical default).
+  Unlike the migration RBAC/ExternalSecret hooks, this default is genuinely
+  dangerous here: deleting a Namespace cascades to delete every resource
+  inside it, so leaving createNamespace=true under ArgoCD means the whole
+  release — Deployments, Secrets, everything — gets torn down and rebuilt on
+  every sync. There is no hook-delete-policy value that avoids this while
+  keeping the Namespace a hook (before-hook-creation is the only sane choice
+  for a resource that must exist before other pre-install hooks, and the
+  alternatives — hook-succeeded/hook-failed — would delete the Namespace
+  outright once the sync finishes). The only real fix is to keep this
+  resource from rendering at all under ArgoCD: set createNamespace=false so
+  this whole block is skipped, and let ArgoCD create the namespace itself via
+  `syncOptions: [CreateNamespace=true]` — a native, non-hook, one-time
+  operation with no delete-then-recreate lifecycle.
+
+  For a genuine (non-ArgoCD) `helm install`/`helm upgrade` CLI run, lookup has
+  real cluster access, so this guard behaves as intended: first install
+  renders the Namespace as the earliest hook (weight -11, preceding the
+  ExternalSecret's -10) so a first-time install into a fresh namespace works
+  without pre-provisioning it, then every subsequent `helm upgrade` sees the
+  namespace already exists and skips rendering it, never re-entering the
+  hook path (and therefore never hitting the before-hook-creation default) at
+  all. helm uninstall does not remove hook resources, so the Namespace
+  outlives the release even in that path (intentional — deleting it would
+  cascade to any externally-created resources in it).
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- /*
@@ -32,12 +53,6 @@ metadata:
   name: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.labels" . | nindent 4 }}
-  {{- /*
-    No hook-delete-policy here: before-hook-creation would delete and recreate
-    the Namespace on any hook re-run, cascade-deleting everything inside it.
-    Hook + weight alone give the ordering; the lookup guard above already
-    suppresses re-creation on live installs.
-  */}}
   {{- if .Values.migrations.hook }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
