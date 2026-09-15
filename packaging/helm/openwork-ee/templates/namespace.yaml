@@ -108,7 +108,7 @@
 {{- $existingMeta := $existing.metadata | default dict -}}
 {{- $existingAnnotations = $existingMeta.annotations | default dict -}}
 {{- end -}}
-{{- $alreadySafe := or (hasKey $existingAnnotations "helm.sh/hook") (hasKey $existingAnnotations "helm.sh/resource-policy") -}}
+{{- $alreadySafe := or (hasKey $existingAnnotations "helm.sh/hook") (eq (get $existingAnnotations "helm.sh/resource-policy" | default "") "keep") -}}
 {{- if not $existing }}
 apiVersion: v1
 kind: Namespace
