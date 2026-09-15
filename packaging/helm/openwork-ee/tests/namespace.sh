@@ -103,8 +103,10 @@ assert_namespace_hook_safe "$opt_in_rendered"
 # actively kept in sync if such a transition happens, but never deleted.
 assert_contains "$opt_in_rendered" 'helm.sh/resource-policy": keep'
 
-# With createNamespace=true but the migration hook disabled, the Namespace is
-# a plain (non-hook) manifest.
+# With createNamespace=true but the migration hook disabled, the Namespace
+# still renders as the same pre-install,pre-upgrade hook — its hook-ness no
+# longer varies with migrations.hook at all (see the long comment atop
+# templates/namespace.yaml).
 nohook_rendered="$tmp_dir/nohook.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
 # Regression: the Namespace's hook-ness is decoupled from migrations.hook —
@@ -113,10 +115,33 @@ helm template openwork-ee "$chart_dir" --set createNamespace=true --set migratio
 # empirically against a live cluster: hook -> plain hard-fails the upgrade
 # outright ("exists and cannot be imported into the current release: invalid
 # ownership metadata", since a hook-created resource never receives Helm's
-# release-ownership labels), and plain -> hook depends entirely on
-# resource-policy: keep already having been stamped onto the live object by
-# a prior release, which cannot be assumed for one predating this fix. So it
-# must still render exactly as the createNamespace=true/migrations.hook=true
+# release-ownership labels), and plain -> hook (for the very first time)
+# deletes the existing object before the new hook's own annotations —
+# resource-policy: keep included — ever apply, confirmed by watching a
+# canary resource inside the namespace get wiped out even though the new
+# hook render already carried the keep annotation. templates/namespace.yaml
+# handles that one-time transition automatically by checking, via lookup,
+# whether an existing Namespace already carries EITHER helm.sh/hook (the
+# common case: a release from before this fix, where it was already a hook
+# under the old default and was never at risk in the first place, since hook
+# resources are never tracked by a release the way ordinary ones are) or
+# resource-policy: keep (already migrated by an earlier release running this
+# same logic): if either is present, omit it entirely and never touch it
+# again. Only when NEITHER marker is present — a release that had
+# migrations.hook=false, where the Namespace was an ordinary, non-hook,
+# unprotected resource — does it render as a plain (non-hook) manifest that
+# only adds the missing annotation, never reclassifying it, so the
+# *following* release then finds helm.sh/resource-policy present and leaves
+# it alone from then on too. None of that lookup-dependent branching is
+# reachable from `helm template` alone (lookup always returns empty without
+# a live cluster, exactly like under ArgoCD), so this file cannot assert it
+# directly — it was instead verified with real helm install/upgrade cycles
+# against a live cluster covering both starting states (already a hook
+# without keep; a plain unprotected resource) with both the isolated
+# mechanism and the actual chart, checking object identity (UID) and a
+# canary resource's survival across each transition. What this fixture *can*
+# assert is that with nothing live to find (as `helm template` always sees),
+# it must still render exactly as the createNamespace=true/migrations.hook=true
 # case above — same hook annotations, same resource-policy: keep — even with
 # migrations.hook=false, which now only affects the ExternalSecret/migration
 # RBAC/migration Job hooks.
