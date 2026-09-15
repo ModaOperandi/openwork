@@ -28,14 +28,23 @@
   For a genuine (non-ArgoCD) `helm install`/`helm upgrade` CLI run with the
   default migrations.hook=true, lookup has real cluster access, so this guard
   behaves as intended: first install renders the Namespace as the earliest
-  hook (weight -11, preceding the ExternalSecret's -10) so a first-time
-  install into a fresh namespace works without pre-provisioning it, then
-  every subsequent `helm upgrade` sees the namespace already exists and skips
+  hook (weight -11, preceding the ExternalSecret's -10), then every
+  subsequent `helm upgrade` sees the namespace already exists and skips
   rendering it, never re-entering the hook path (and therefore never hitting
   the before-hook-creation default) at all. helm uninstall does not remove
   hook resources, so the Namespace outlives the release even in that path
   (intentional — deleting it would cascade to any externally-created
   resources in it).
+
+  This does NOT let a first install skip pre-provisioning the *release*
+  namespace itself (the one passed via `helm install --namespace`): Helm
+  creates its own release-tracking record there before running any hook, so
+  if that namespace does not already exist and --create-namespace was not
+  passed, the install fails immediately, before this (or any) pre-install
+  hook ever runs. This hook only helps when the chart's own `namespace` value
+  (above) names a *different*, not-yet-existing namespace than the one Helm's
+  release itself lives in (which must already exist, or be created via
+  --create-namespace, some other way).
 
   The lookup-skip trick above only applies while this renders as a hook.
   With migrations.hook=false the Namespace instead renders as a plain,

@@ -48,8 +48,11 @@ assert_count "$default_rendered" '  namespace: "openwork"' 8
 assert_count "$default_rendered" '  namespace: "kube-system"' 0
 
 # Opting in (createNamespace=true) with the migration hook enabled (default)
-# renders the Namespace as the earliest hook so first-time installs into a
-# fresh namespace work: hook resources (ExternalSecret, migration RBAC/Job)
+# renders the Namespace as the earliest hook so a first-time install into a
+# not-yet-existing *target* namespace works (a namespace other than the one
+# already established for the Helm release itself — see the caveat atop
+# templates/namespace.yaml about why this can never bootstrap a fresh release
+# namespace on its own): hook resources (ExternalSecret, migration RBAC/Job)
 # are namespaced and would otherwise be created before a normal-manifest
 # Namespace exists.
 opt_in_rendered="$tmp_dir/opt-in.yaml"

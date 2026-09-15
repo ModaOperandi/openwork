@@ -117,19 +117,28 @@ that flow.
 ### Namespace creation under ArgoCD
 
 `createNamespace` (default `false`) controls whether the chart renders its own
-`Namespace` object, as the earliest `pre-install,pre-upgrade` hook so a
-first-time install into a fresh namespace works without pre-provisioning it.
-It defaults to `false` because it is unnecessary for the recommended `helm
+`Namespace` object, as the earliest `pre-install,pre-upgrade` hook. It
+defaults to `false` because it is unnecessary for the recommended `helm
 install`/`helm upgrade --create-namespace` workflow (the CLI flag creates the
 namespace itself, before this chart or any of its hooks ever render) and
-actively dangerous under ArgoCD (below) — enable it only for a direct Helm
-workflow that cannot pass `--create-namespace` and cannot pre-provision the
-namespace out of band.
+actively dangerous under ArgoCD (below).
 
-When enabled for a genuine `helm install`/`helm upgrade` CLI run, it is safe:
-the chart uses Helm's `lookup` function to detect an already-existing
-namespace and skips rendering the hook entirely on every upgrade after the
-first install.
+**This hook cannot help a first install into a not-yet-existing *release*
+namespace** (the one passed via `helm install --namespace`): Helm creates its
+own release-tracking record in that namespace before running any hook, so if
+it does not already exist and `--create-namespace` was not passed, the
+install fails immediately (`failed to create: namespaces "x" not found`)
+before this or any pre-install hook ever runs — pre-provision that namespace
+or pass `--create-namespace` regardless of this setting. Enable
+`createNamespace` only when the Helm release namespace already exists (or is
+a separate namespace altogether, e.g. a shared ops namespace) but this
+chart's own `namespace` value points at a *different*, not-yet-existing
+target namespace that this hook creates.
+
+When enabled for that scenario as a genuine `helm install`/`helm upgrade` CLI
+run, it is safe: the chart uses Helm's `lookup` function to detect an
+already-existing namespace and skips rendering the hook entirely on every
+upgrade after the first install.
 
 **This safety check does not work under ArgoCD**, which is why the default is
 `false` rather than relying on every consumer to override it. ArgoCD renders

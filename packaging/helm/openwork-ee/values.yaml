@@ -9,19 +9,27 @@ fullnameOverride: ""
 namespace: openwork
 
 # Render a Namespace object for the namespace above, as a pre-install/
-# pre-upgrade hook (so first-time `helm install` into a fresh namespace works
-# without pre-provisioning it). Defaults to false: Helm's `--create-namespace`
-# CLI flag already covers the direct-Helm case without ever touching this
-# hook, and enabling it under ArgoCD is actively dangerous — ArgoCD's
-# repo-server renders charts via `helm template` with no live cluster
-# connection, so the `lookup`-based guard below that skips re-rendering this
-# hook once the namespace exists never engages there, meaning the hook (and
-# Helm/Argo CD's undocumented-by-omission default of before-hook-creation)
-# would delete and recreate the Namespace — cascading through every resource
-# in the release — on every single sync. Set true only for a genuine `helm
-# install`/`helm upgrade` CLI workflow that does not already pass
-# --create-namespace and cannot pre-provision the namespace out of band. Under
-# ArgoCD, create the namespace via `syncOptions: [CreateNamespace=true]`
+# pre-upgrade hook. Defaults to false: Helm's `--create-namespace` CLI flag
+# already covers the common direct-Helm case without ever touching this hook,
+# and enabling it under ArgoCD is actively dangerous — ArgoCD's repo-server
+# renders charts via `helm template` with no live cluster connection, so the
+# `lookup`-based guard below that skips re-rendering this hook once the
+# namespace exists never engages there, meaning the hook (and Helm/Argo CD's
+# undocumented-by-omission default of before-hook-creation) would delete and
+# recreate the Namespace — cascading through every resource in the release —
+# on every single sync.
+#
+# This does NOT help with a fresh `helm install` into a not-yet-existing
+# release namespace (i.e. the same namespace passed via `--namespace`): Helm
+# creates its own release-tracking record in that namespace before running
+# any hook, pre-install hooks included, so if the namespace does not already
+# exist and --create-namespace was not passed, the install fails immediately
+# ("failed to create: namespaces \"x\" not found") without this hook ever
+# getting a chance to run. Set true only when the Helm *release* namespace
+# (`--namespace`) already exists (or is a distinct namespace altogether, e.g.
+# a shared ops namespace) but this chart's own `namespace` value above points
+# at a separate, not-yet-existing target namespace that this hook creates.
+# Under ArgoCD, create the namespace via `syncOptions: [CreateNamespace=true]`
 # instead; see "Namespace creation under ArgoCD" in README.md.
 createNamespace: false
 
