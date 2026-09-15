@@ -245,9 +245,12 @@ secret:
 externalSecrets:
   # ATTENTION: the three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
   # DEN_DB_ENCRYPTION_KEY) and every key you list under optionalKeys must exist
-  # in your provider under pathPrefix — the chart pulls each rendered key by
-  # name from <pathPrefix>/<KEY_NAME> and a missing rendered key fails the
-  # ExternalSecret. Keys you neither need nor list are not pulled.
+  # in your provider — where depends on keyLayout (see below). In the default
+  # perKey layout, the chart pulls each rendered key by name from
+  # <pathPrefix>/<KEY_NAME>. In singleSecret layout, every rendered key instead
+  # comes from a same-named JSON property inside the one combined secret named
+  # exactly pathPrefix. Either way, a missing rendered key fails the
+  # ExternalSecret; keys you neither need nor list are not pulled.
   # How often ESO re-syncs the Secret from the provider.
   refreshInterval: 1h
   # Store holding the remote keys. For AWS Secrets Manager the store's
@@ -289,11 +292,12 @@ externalSecrets:
   # {"DATABASE_URL": "...", "BETTER_AUTH_SECRET": "...", ...}.
   pathPrefix: ""
   # Optional keys to also pull from the provider. Entries are secret.keys
-  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
-  # path and target Secret key use the corresponding value (SMTP_PASS).
-  # Only listed keys get a spec.data entry — ESO's remoteRef has no "skip if
-  # missing", so keys you do not list here need not exist in the provider and
-  # simply do not land in the Secret.
+  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the target
+  # Secret key uses the corresponding value (SMTP_PASS), which is also the
+  # provider path suffix in perKey layout or the JSON property name in
+  # singleSecret layout. Only listed keys get a spec.data entry — ESO's
+  # remoteRef has no "skip if missing", so keys you do not list here need not
+  # exist in the provider and simply do not land in the Secret.
   optionalKeys: []
   # Seconds the workload init container waits for an optional key to appear in
   # the materialized Secret before starting without it. envFrom snapshots keys

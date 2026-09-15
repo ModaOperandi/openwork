@@ -385,23 +385,29 @@ must be a JSON object such as
 `{"DATABASE_URL": "...", "BETTER_AUTH_SECRET": "...", "DEN_DB_ENCRYPTION_KEY": "..."}`,
 plus any `optionalKeys` properties you list.
 
-The three required keys must exist in your provider under `pathPrefix` — a
-missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
-"skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
-you list under `optionalKeys` must exist in the provider, and keys you omit do
-not land in the Secret. Omitted keys are simply absent from the workload
-environment, so check each consumer before omitting one. Two illustrative
-cases: `DAYTONA_API_KEY` is *required* when `config.provisioner.mode` is
-`daytona` — Den API rejects startup without it, so omitting it there breaks
-boot, whereas it is safe to omit under the default `stub` provisioner; and
-omitted `SMTP_PORT`/`SMTP_SECURE` fall back to the application's own defaults
-(`587` / `false`) whenever they are absent, regardless of whether the Secret
-carries them. `optionalKeys`
-entries are `secret.keys` **property names** (camelCase, e.g. `smtpPass`); the
-provider path and the target Secret key use the corresponding **value**
-(`SMTP_PASS` by default, overridable via `secret.keys.smtpPass`). So list
-`smtpPass` here, ensure `eks/.../SMTP_PASS` (or your overridden value) exists
-in the provider, and the Secret key will be `SMTP_PASS`.
+The three required keys must exist in your provider — where depends on
+`keyLayout`, as above — and a missing one fails the ExternalSecret loudly.
+ESO's `remoteRef` has no "skip-if-missing" field, so optional keys are opt-in:
+any `secret.keys.*` name you list under `optionalKeys` must exist in the
+provider, and keys you omit do not land in the Secret. Omitted keys are simply
+absent from the workload environment, so check each consumer before omitting
+one. Two illustrative cases: `DAYTONA_API_KEY` is *required* when
+`config.provisioner.mode` is `daytona` — Den API rejects startup without it, so
+omitting it there breaks boot, whereas it is safe to omit under the default
+`stub` provisioner; and omitted `SMTP_PORT`/`SMTP_SECURE` fall back to the
+application's own defaults (`587` / `false`) whenever they are absent,
+regardless of whether the Secret carries them. `optionalKeys` entries are
+`secret.keys` **property names** (camelCase, e.g. `smtpPass`); the target
+Secret key uses the corresponding **value** (`SMTP_PASS` by default,
+overridable via `secret.keys.smtpPass`). So list `smtpPass` here, and depending
+on `keyLayout`:
+
+- `perKey`: ensure `eks/.../SMTP_PASS` (or your overridden value) exists in the
+  provider as its own entry.
+- `singleSecret`: ensure the single combined secret at `pathPrefix` has a
+  `SMTP_PASS` JSON property.
+
+Either way the target Secret key is `SMTP_PASS`.
 `target.deletionPolicy` defaults to `Retain`, so uninstalling the release keeps
 the materialized Secret. ESO must be installed on the destination cluster with
 a `SecretStore`/`ClusterSecretStore`; the chart selects
