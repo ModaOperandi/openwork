@@ -26,21 +26,28 @@ assert_contains() {
   fi
 }
 
-# Default render: every namespaced resource lands in "openwork".
-# 9 resources: Namespace, Secret, ConfigMap, den-api/den-web
+# Default render: createNamespace now defaults to false (Helm's own
+# --create-namespace flag already covers the direct-Helm case, and enabling
+# this hook by default was actively dangerous under ArgoCD — see
+# templates/namespace.yaml). No Namespace object renders unless explicitly
+# opted into. 8 namespaced resources: Secret, ConfigMap, den-api/den-web
 # Services+Deployments, migration Job, env-probe test Job.
 default_rendered="$tmp_dir/default.yaml"
 helm template openwork-ee "$chart_dir" > "$default_rendered"
-assert_count "$default_rendered" 'kind: Namespace' 1
-assert_contains "$default_rendered" 'name: "openwork"'
+assert_count "$default_rendered" 'kind: Namespace' 0
 assert_count "$default_rendered" '  namespace: "openwork"' 8
 assert_count "$default_rendered" '  namespace: "kube-system"' 0
 
-# With the migration hook enabled (default), the Namespace renders as the
-# earliest hook so first-time installs into a fresh namespace work: hook
-# resources (ExternalSecret, migration RBAC/Job) are namespaced and would
-# otherwise be created before a normal-manifest Namespace exists.
-assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
+# Opting in (createNamespace=true) with the migration hook enabled (default)
+# renders the Namespace as the earliest hook so first-time installs into a
+# fresh namespace work: hook resources (ExternalSecret, migration RBAC/Job)
+# are namespaced and would otherwise be created before a normal-manifest
+# Namespace exists.
+opt_in_rendered="$tmp_dir/opt-in.yaml"
+helm template openwork-ee "$chart_dir" --set createNamespace=true > "$opt_in_rendered"
+assert_count "$opt_in_rendered" 'kind: Namespace' 1
+assert_contains "$opt_in_rendered" 'name: "openwork"'
+assert_contains "$opt_in_rendered" 'helm.sh/hook-weight": "-11"'
 # The rendered Namespace hook must never carry an explicit hook-delete-policy
 # annotation: an explicit before-hook-creation would be no different from the
 # Helm/Argo CD default for an unannotated hook (both explicitly document
@@ -50,8 +57,9 @@ assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
 # and skips rendering this hook at all once the namespace exists, so the
 # dangerous default is never reached in that path. It IS reached on every
 # ArgoCD sync (lookup() always returns empty there) — ArgoCD deployments must
-# set createNamespace=false and use `syncOptions: [CreateNamespace=true]`
-# instead; see the long comment atop templates/namespace.yaml.
+# leave createNamespace at its false default and use
+# `syncOptions: [CreateNamespace=true]` instead; see the long comment atop
+# templates/namespace.yaml.
 # (The env-probe test Job legitimately uses before-hook-creation, so scope the
 # check to the Namespace document.)
 assert_namespace_hook_safe() {
@@ -70,23 +78,27 @@ assert_namespace_hook_safe() {
     fi
   done < "$file"
 }
-assert_namespace_hook_safe "$default_rendered"
+assert_namespace_hook_safe "$opt_in_rendered"
 
-# With the migration hook disabled, the Namespace is a plain manifest.
+# With createNamespace=true but the migration hook disabled, the Namespace is
+# a plain (non-hook) manifest.
 nohook_rendered="$tmp_dir/nohook.yaml"
-helm template openwork-ee "$chart_dir" --set migrations.hook=false > "$nohook_rendered"
+helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
 assert_count "$nohook_rendered" 'kind: Namespace' 1
 assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
 
-# createNamespace=false skips the Namespace object (out-of-band provisioning).
+# createNamespace=false (the default, set explicitly here) skips the
+# Namespace object entirely (out-of-band provisioning, e.g. --create-namespace
+# or ArgoCD's own CreateNamespace=true syncOption).
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
 
-# Full render (ingress + inference enabled): Namespace + 11 namespaced resources.
+# Full render (ingress + inference + createNamespace all enabled): Namespace +
+# 11 namespaced resources.
 full_rendered="$tmp_dir/full.yaml"
 helm template openwork-ee "$chart_dir" \
-  --set ingress.enabled=true --set inference.enabled=true > "$full_rendered"
+  --set createNamespace=true --set ingress.enabled=true --set inference.enabled=true > "$full_rendered"
 assert_count "$full_rendered" 'kind: Namespace' 1
 assert_count "$full_rendered" '  namespace: "openwork"' 11
 
@@ -103,7 +115,7 @@ assert_count "$fallback_rendered" '  namespace: "rel-ns"' 8
 
 # The Namespace object name follows the namespace value.
 nsdef_override_rendered="$tmp_dir/nsdef-override.yaml"
-helm template openwork-ee "$chart_dir" --set namespace=platform > "$nsdef_override_rendered"
+helm template openwork-ee "$chart_dir" --set createNamespace=true --set namespace=platform > "$nsdef_override_rendered"
 assert_count "$nsdef_override_rendered" 'kind: Namespace' 1
 assert_contains "$nsdef_override_rendered" 'name: "platform"'
 

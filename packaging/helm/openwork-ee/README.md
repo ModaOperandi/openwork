@@ -114,29 +114,39 @@ that flow.
 
 ### Namespace creation under ArgoCD
 
-`createNamespace` (default `true`) controls whether the chart renders its own
+`createNamespace` (default `false`) controls whether the chart renders its own
 `Namespace` object, as the earliest `pre-install,pre-upgrade` hook so a
 first-time install into a fresh namespace works without pre-provisioning it.
-For a genuine `helm install`/`helm upgrade` CLI run this is safe: the chart
-uses Helm's `lookup` function to detect an already-existing namespace and
-skips rendering the hook entirely on every upgrade after the first install.
+It defaults to `false` because it is unnecessary for the recommended `helm
+install`/`helm upgrade --create-namespace` workflow (the CLI flag creates the
+namespace itself, before this chart or any of its hooks ever render) and
+actively dangerous under ArgoCD (below) — enable it only for a direct Helm
+workflow that cannot pass `--create-namespace` and cannot pre-provision the
+namespace out of band.
 
-**This safety check does not work under ArgoCD.** ArgoCD renders charts with
-`helm template` in its repo-server, which has no live cluster connection, so
-`lookup` always returns empty there — the Namespace hook renders on every
-single sync, unconditionally. Helm and ArgoCD both document that a hook
-without an explicit `hook-delete-policy` defaults to `before-hook-creation`
-(delete the previous resource, then create a new one), and deleting a
-Namespace cascades to delete everything inside it. Left on its default,
-`createNamespace: true` under ArgoCD means the **entire release** —
-Deployments, Secrets, everything — gets torn down and rebuilt on every sync.
+When enabled for a genuine `helm install`/`helm upgrade` CLI run, it is safe:
+the chart uses Helm's `lookup` function to detect an already-existing
+namespace and skips rendering the hook entirely on every upgrade after the
+first install.
 
-Set `createNamespace: false` for any ArgoCD `Application` and instead let
-ArgoCD create the namespace itself:
+**This safety check does not work under ArgoCD**, which is why the default is
+`false` rather than relying on every consumer to override it. ArgoCD renders
+charts with `helm template` in its repo-server, which has no live cluster
+connection, so `lookup` always returns empty there — if `createNamespace` were
+enabled, the Namespace hook would render on every single sync,
+unconditionally. Helm and ArgoCD both document that a hook without an explicit
+`hook-delete-policy` defaults to `before-hook-creation` (delete the previous
+resource, then create a new one), and deleting a Namespace cascades to delete
+everything inside it. Enabling `createNamespace` under ArgoCD would mean the
+**entire release** — Deployments, Secrets, everything — gets torn down and
+rebuilt on every sync.
+
+Leave `createNamespace` at its default (`false`) for any ArgoCD `Application`
+and instead let ArgoCD create the namespace itself:
 
 ```yaml
 # Application values
-createNamespace: false
+createNamespace: false  # the default — shown for clarity, not required
 ```
 
 ```yaml

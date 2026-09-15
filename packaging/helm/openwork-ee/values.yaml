@@ -8,11 +8,22 @@ fullnameOverride: ""
 # `helm install`, keep this aligned with `--namespace` / the release namespace.
 namespace: openwork
 
-# Render a Namespace object for the namespace above, so GitOps flows (ArgoCD
-# runs helm template and does not create namespaces unless CreateNamespace=true)
-# manage it as a resource from git. Set false only when the platform team
-# provisions namespaces out of band.
-createNamespace: true
+# Render a Namespace object for the namespace above, as a pre-install/
+# pre-upgrade hook (so first-time `helm install` into a fresh namespace works
+# without pre-provisioning it). Defaults to false: Helm's `--create-namespace`
+# CLI flag already covers the direct-Helm case without ever touching this
+# hook, and enabling it under ArgoCD is actively dangerous — ArgoCD's
+# repo-server renders charts via `helm template` with no live cluster
+# connection, so the `lookup`-based guard below that skips re-rendering this
+# hook once the namespace exists never engages there, meaning the hook (and
+# Helm/Argo CD's undocumented-by-omission default of before-hook-creation)
+# would delete and recreate the Namespace — cascading through every resource
+# in the release — on every single sync. Set true only for a genuine `helm
+# install`/`helm upgrade` CLI workflow that does not already pass
+# --create-namespace and cannot pre-provision the namespace out of band. Under
+# ArgoCD, create the namespace via `syncOptions: [CreateNamespace=true]`
+# instead; see "Namespace creation under ArgoCD" in README.md.
+createNamespace: false
 
 image:
   tag: latest
