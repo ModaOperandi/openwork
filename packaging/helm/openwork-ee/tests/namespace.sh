@@ -26,6 +26,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local file="$1"
+  local needle="$2"
+  if grep -F -q -- "$needle" "$file"; then
+    printf 'Expected rendered chart not to contain %s\n' "$needle" >&2
+    return 1
+  fi
+}
+
 # Default render: createNamespace now defaults to false (Helm's own
 # --create-namespace flag already covers the direct-Helm case, and enabling
 # this hook by default was actively dangerous under ArgoCD — see
@@ -86,6 +95,17 @@ nohook_rendered="$tmp_dir/nohook.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
 assert_count "$nohook_rendered" 'kind: Namespace' 1
 assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
+# Regression: the plain-manifest Namespace must render unconditionally here
+# (no lookup-gated skip), never carrying any helm.sh/hook annotation. Helm
+# exempts hook resources from release-manifest tracking/pruning ("hook
+# resources are not managed with corresponding releases") but NOT plain
+# resources — if this path reused the hook path's lookup-and-skip-once-
+# existing trick, the first `helm install` would render (and track) it once,
+# then every later `helm upgrade` would omit it because lookup finds it,
+# which Helm reads as "removed from the chart" and deletes — cascading
+# everything in the namespace, on the *second* upgrade of a perfectly normal,
+# supported migrations.hook=false configuration.
+assert_not_contains "$nohook_rendered" '"helm.sh/hook": pre-install'
 
 # createNamespace=false (the default, set explicitly here) skips the
 # Namespace object entirely (out-of-band provisioning, e.g. --create-namespace
