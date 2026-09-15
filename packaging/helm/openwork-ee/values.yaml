@@ -245,9 +245,12 @@ secret:
 externalSecrets:
   # ATTENTION: the three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
   # DEN_DB_ENCRYPTION_KEY) and every key you list under optionalKeys must exist
-  # in your provider under pathPrefix — the chart pulls each rendered key by
-  # name from <pathPrefix>/<KEY_NAME> and a missing rendered key fails the
-  # ExternalSecret. Keys you neither need nor list are not pulled.
+  # in your provider — where depends on keyLayout (see below). In the default
+  # perKey layout, the chart pulls each rendered key by name from
+  # <pathPrefix>/<KEY_NAME>. In singleSecret layout, every rendered key instead
+  # comes from a same-named JSON property inside the one combined secret named
+  # exactly pathPrefix. Either way, a missing rendered key fails the
+  # ExternalSecret; keys you neither need nor list are not pulled.
   # How often ESO re-syncs the Secret from the provider.
   refreshInterval: 1h
   # Store holding the remote keys. For AWS Secrets Manager the store's
@@ -265,21 +268,36 @@ externalSecrets:
     creationPolicy: Owner
     # Retain keeps the Secret if the ExternalSecret is deleted.
     deletionPolicy: Retain
-  # Remote path trunk: keys are pulled from <pathPrefix>/<KEY_NAME>. The chart
-  # renders spec.data for the three boot-critical keys (DATABASE_URL,
-  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus the entries explicitly
-  # selected in optionalKeys. The optional list is opt-in and maintained by
-  # hand — if a future feature starts consuming a new secret key, add its
-  # secret.keys.* name to optionalKeys and create the provider entry.
+  # How keys map onto provider entries. "perKey" (default) pulls one provider
+  # secret per env var, named <pathPrefix>/<KEY_NAME> — see pathPrefix below.
+  # "singleSecret" instead pulls every key as a JSON property of one combined
+  # provider secret named exactly pathPrefix — use this when your provider
+  # stores one secret per service (e.g. AWS Secrets Manager entries like
+  # eks/<project>/<env>/<service> holding a JSON object of key/value pairs)
+  # rather than one entry per key.
+  keyLayout: perKey
+  # Remote path trunk. In keyLayout: perKey, keys are pulled from
+  # <pathPrefix>/<KEY_NAME>. In keyLayout: singleSecret, pathPrefix is instead
+  # the exact name of the single combined secret and each key is read from its
+  # same-named JSON property inside it. The chart renders spec.data for the
+  # three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
+  # DEN_DB_ENCRYPTION_KEY) plus the entries explicitly selected in
+  # optionalKeys. The optional list is opt-in and maintained by hand — if a
+  # future feature starts consuming a new secret key, add its secret.keys.*
+  # name to optionalKeys and create the provider entry.
   # REQUIRED when secretsMode: externalSecrets (render fails if blank).
-  # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
+  # Example (AWS Secrets Manager, perKey): pathPrefix: "eks/openwork/prod/den"
+  # Example (AWS Secrets Manager, singleSecret): the same pathPrefix, but
+  # eks/openwork/prod/den is itself one secret holding
+  # {"DATABASE_URL": "...", "BETTER_AUTH_SECRET": "...", ...}.
   pathPrefix: ""
   # Optional keys to also pull from the provider. Entries are secret.keys
-  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
-  # path and target Secret key use the corresponding value (SMTP_PASS).
-  # Only listed keys get a spec.data entry — ESO's remoteRef has no "skip if
-  # missing", so keys you do not list here need not exist in the provider and
-  # simply do not land in the Secret.
+  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the target
+  # Secret key uses the corresponding value (SMTP_PASS), which is also the
+  # provider path suffix in perKey layout or the JSON property name in
+  # singleSecret layout. Only listed keys get a spec.data entry — ESO's
+  # remoteRef has no "skip if missing", so keys you do not list here need not
+  # exist in the provider and simply do not land in the Secret.
   optionalKeys: []
   # Seconds the workload init container waits for an optional key to appear in
   # the materialized Secret before starting without it. envFrom snapshots keys
