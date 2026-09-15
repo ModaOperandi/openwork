@@ -88,6 +88,17 @@ assert_namespace_hook_safe() {
   done < "$file"
 }
 assert_namespace_hook_safe "$opt_in_rendered"
+# Defense in depth against Helm's release-tracking semantics across mode
+# transitions this template cannot fully control from either side alone
+# (e.g. migrations.hook flipping true->false->true across upgrades, or a
+# pre-existing release from before non-hook rendering existed): the
+# Namespace always carries helm.sh/resource-policy: keep, which Helm's own
+# docs state "instructs Helm to skip deleting this resource when a helm
+# operation (such as helm uninstall, helm upgrade or helm rollback) would
+# result in its deletion" — unconditionally, regardless of how the resource
+# is currently classified. The resource is orphaned (unmanaged) rather than
+# actively kept in sync if such a transition happens, but never deleted.
+assert_contains "$opt_in_rendered" 'helm.sh/resource-policy": keep'
 
 # With createNamespace=true but the migration hook disabled, the Namespace is
 # a plain (non-hook) manifest.
@@ -95,6 +106,7 @@ nohook_rendered="$tmp_dir/nohook.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
 assert_count "$nohook_rendered" 'kind: Namespace' 1
 assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
+assert_contains "$nohook_rendered" 'helm.sh/resource-policy": keep'
 # Regression: the plain-manifest Namespace must render unconditionally here
 # (no lookup-gated skip), never carrying any helm.sh/hook annotation. Helm
 # exempts hook resources from release-manifest tracking/pruning ("hook

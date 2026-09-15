@@ -162,6 +162,18 @@ This is a native, non-hook, one-time ArgoCD operation with no delete-then-recrea
 lifecycle, so the namespace (and everything in it) is created once and then
 left alone by subsequent syncs.
 
+As defense in depth on top of the lookup-based guard above, the rendered
+Namespace also always carries `helm.sh/resource-policy: keep`. Helm's docs
+state plainly that this "instructs Helm to skip deleting this resource when a
+helm operation (such as `helm uninstall`, `helm upgrade` or `helm rollback`)
+would result in its deletion" — this covers transitions the guard above
+cannot, such as toggling `migrations.hook` across upgrades (see "Migrations"
+below) or a pre-existing release from before this chart supported non-hook
+Namespace rendering. If such a transition ever does occur, the Namespace is
+orphaned (Helm stops actively managing it, so future label changes from this
+chart stop applying) rather than deleted — the correct trade-off for a
+resource whose deletion cascades to the entire release.
+
 ### Upgrade note: public URL values
 
 Current chart versions make `config.public.webOrigin` the primary public URL.

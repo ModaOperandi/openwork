@@ -51,6 +51,24 @@
   migrations.hook: in hook mode, skip once it exists; in plain-manifest mode,
   always render it (a plain Namespace apply is naturally idempotent, a no-op
   patch when unchanged, so there is no cost to never skipping it).
+
+  Defense in depth, on top of the above: every branch below also carries
+  `helm.sh/resource-policy: keep`. Helm's own docs are explicit that this
+  "instructs Helm to skip deleting this resource when a helm operation (such
+  as helm uninstall, helm upgrade or helm rollback) would result in its
+  deletion" — i.e. unlike the hook-exemption this chart otherwise relies on,
+  it is not conditional on how the resource is currently classified, so it
+  also covers transitions the logic above cannot: flipping migrations.hook
+  across an upgrade (plain-tracked one release, hook-and-lookup-skipped the
+  next — the skip would otherwise read as "removed" to Helm), and any
+  pre-existing release from before this file supported non-hook rendering at
+  all, where the Namespace may already be a plain tracked resource in Helm's
+  stored release history for reasons this template can no longer see or
+  control. The trade-off, per Helm's docs: the Namespace becomes "orphaned"
+  the moment such a transition happens — Helm stops actively managing it
+  (no more label updates from this chart) — but it is never destructively
+  deleted. That is the correct trade for a resource whose deletion cascades
+  to the entire release.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- if .Values.createNamespace }}
@@ -71,6 +89,7 @@ metadata:
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-11"
+    "helm.sh/resource-policy": keep
 {{- end }}
 {{- else }}
 apiVersion: v1
@@ -79,5 +98,7 @@ metadata:
   name: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
 {{- end }}
 {{- end }}
