@@ -1001,7 +1001,7 @@ The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
 migrations:
   enabled: true
   hook: true
-  hookDeletePolicy: before-hook-creation,hook-succeeded
+  hookDeletePolicy: before-hook-creation,hook-succeeded,hook-failed
   command:
     - node
   args:
@@ -1009,6 +1009,19 @@ migrations:
 ```
 
 The default hook executes the precompiled Den DB bootstrap runner already built into the Den API image. On a completely empty database it applies the build-time current-schema SQL snapshot, records the committed migrations as the baseline, then runs pending migrations with Drizzle ORM. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+
+`hookDeletePolicy` keeps `hook-failed` alongside the defaults: a Job's pod
+template is immutable, so `before-hook-creation` gives each hook run a clean
+slate by deleting the previous instance first, but a **failed** run without
+`hook-failed` used to sit around until the *next* sync's `before-hook-creation`
+delete tried to clear it — and if that delete raced ArgoCD's own automated-sync
+retry timing, the Job (and, via ArgoCD's `hook-finalizer`, the namespace behind
+it) could get stuck `Terminating` indefinitely. `hook-failed` deletes it
+immediately instead, well clear of the next sync attempt. The migration RBAC
+(`ServiceAccount`/`Role`/`RoleBinding`) and the `ExternalSecret` hooks carry no
+delete policy at all for the same class of reason: they are fully idempotent,
+so `before-hook-creation`'s delete-then-create would only add a race for no
+benefit — ordering via `helm.sh/hook-weight` alone is enough.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:

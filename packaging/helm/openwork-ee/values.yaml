@@ -406,7 +406,16 @@ inference:
 migrations:
   enabled: true
   hook: true
-  hookDeletePolicy: before-hook-creation,hook-succeeded
+  # before-hook-creation gives each hook run a clean slate (a Job's pod
+  # template is immutable, so re-running migrations requires a fresh Job
+  # object, unlike the idempotent RBAC/ExternalSecret hooks which no longer
+  # carry a delete policy at all). hook-succeeded and hook-failed additionally
+  # delete the Job right after it finishes, whichever way — without
+  # hook-failed, a failed run used to sit until the next sync's
+  # before-hook-creation delete tried to clear it, and if that delete raced
+  # ArgoCD's own retry timing, the stale Job (and the namespace behind it via
+  # ArgoCD's hook-finalizer) could get stuck Terminating indefinitely.
+  hookDeletePolicy: before-hook-creation,hook-succeeded,hook-failed
   backoffLimit: 2
   activeDeadlineSeconds: 600
   podAnnotations: {}

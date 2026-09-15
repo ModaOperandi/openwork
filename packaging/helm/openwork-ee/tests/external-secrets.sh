@@ -300,6 +300,23 @@ assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-11"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1
+# ExternalSecret and migration RBAC (ServiceAccount/Role/RoleBinding) are
+# idempotent and only need correct ordering, not delete-then-recreate: they
+# must render with no hook-delete-policy at all. before-hook-creation there
+# would race ArgoCD's own delete-then-create sequencing on automated-sync
+# retries — a delete not yet propagated before the following create reports
+# "already exists" and can fail every subsequent sync indefinitely. Only the
+# migration Job (immutable pod template, must run fresh each hook execution)
+# keeps a delete policy — and hook-failed is now part of its default so a
+# failed run is cleaned up immediately rather than lingering until the next
+# sync's before-hook-creation delete races the retry (which is what let a
+# failed Job get stuck Terminating, wedging its whole namespace, before this
+# fix). The two remaining occurrences are the Job's own policy and the
+# unrelated `helm test` env-probe hook (templates/tests/env-probe-job.yaml),
+# which only runs via `helm test` and never participates in ArgoCD's
+# install/upgrade sync at all.
+assert_count "$enabled_rendered" 'hook-delete-policy' 2
+assert_count "$enabled_rendered" 'hook-delete-policy": "before-hook-creation,hook-succeeded,hook-failed"' 1
 
 # Inline mode renders no wait RBAC/initContainer and keeps the migration hook
 # without the ExternalSecret hook annotations.
