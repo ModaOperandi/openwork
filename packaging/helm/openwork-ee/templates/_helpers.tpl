@@ -110,10 +110,22 @@ app.kubernetes.io/component: {{ .component }}
 {{- $resolvedKeys = append $resolvedKeys (index $.Values.secret.keys $name) -}}
 {{- end -}}
 {{- $store := .Values.externalSecrets.secretStoreRef | default dict -}}
+{{- /*
+  Mirror externalsecret.yaml's prefix handling: singleSecret mode treats
+  pathPrefix as the exact provider secret name (whitespace-trimmed only), so
+  the checksum must hash the same untrimmed-of-slash value actually used to
+  build remoteRef.key, not the perKey join trunk.
+*/ -}}
+{{- $keyLayout := .Values.externalSecrets.keyLayout | default "perKey" -}}
+{{- $rawPrefix := .Values.externalSecrets.pathPrefix | toString | trim -}}
+{{- $checksumPrefix := $rawPrefix -}}
+{{- if ne $keyLayout "singleSecret" -}}
+{{- $checksumPrefix = $rawPrefix | trimSuffix "/" -}}
+{{- end -}}
 {{- $input := dict
     "keys" ($resolvedKeys | uniq | sortAlpha)
-    "keyLayout" .Values.externalSecrets.keyLayout
-    "pathPrefix" (.Values.externalSecrets.pathPrefix | toString | trim | trimSuffix "/")
+    "keyLayout" $keyLayout
+    "pathPrefix" $checksumPrefix
     "secretStoreName" ($store.name | default "")
     "secretStoreKind" ($store.kind | default "")
     "conversionStrategy" .Values.externalSecrets.conversionStrategy
@@ -278,7 +290,7 @@ external-secrets.io/v1beta1
 {{- if not (.Values.externalSecrets.pathPrefix | toString | trim) -}}
 {{- fail "externalSecrets.pathPrefix is required when secretsMode=externalSecrets" -}}
 {{- end -}}
-{{- if not (has .Values.externalSecrets.keyLayout (list "perKey" "singleSecret")) -}}
+{{- if not (has (.Values.externalSecrets.keyLayout | default "perKey") (list "perKey" "singleSecret")) -}}
 {{- fail "externalSecrets.keyLayout must be perKey or singleSecret" -}}
 {{- end -}}
 {{- range $key := .Values.externalSecrets.optionalKeys | default (list) -}}
