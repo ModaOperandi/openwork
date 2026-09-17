@@ -247,9 +247,11 @@ migration; it happens automatically on the first upgrade to a chart version
 carrying this fix, even if `createNamespace` is left at its new `false`
 default. Under ArgoCD, do **not** rely on this lookup-based migration for an
 existing release that previously used `migrations.hook: false`: make that
-Namespace safe first (for example by adding `helm.sh/resource-policy: keep`
-before the upgrade, or by using another Argo-visible one-release migration)
-before letting the chart omit it. The direct Helm path was verified with live
+Namespace safe first (for example by setting
+`migrateLegacyPlainNamespace=true` for one upgrade so the chart renders the
+plain Namespace with both `helm.sh/resource-policy: keep` and ArgoCD
+`Prune=false`, or by adding equivalent protection another way) before letting
+the chart omit it. The direct Helm path was verified with live
 install/upgrade cycles against a real cluster, checking object identity (UID)
 and a canary resource's survival: an existing, unprotected Namespace upgraded
 to this chart version with `createNamespace` deliberately left unset (so it
