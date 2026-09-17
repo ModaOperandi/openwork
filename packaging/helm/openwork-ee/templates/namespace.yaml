@@ -36,80 +36,114 @@
   --create-namespace, some other way).
 
   For a genuine (non-ArgoCD) helm install/upgrade CLI run, lookup has real
-  cluster access, and the branches below make three decisions, in order,
-  based on what it finds live — all confirmed empirically against a real
-  cluster, including checking object identity (UID) and a canary resource's
-  survival across each transition, not just "the command succeeded":
+  cluster access, and the branches below make decisions based on what it
+  finds live — all confirmed empirically against a real cluster, including
+  checking object identity (UID) and a canary resource's survival across
+  each transition, not just "the command succeeded":
 
   1. Nothing exists yet: render as the earliest hook (weight -11, preceding
      the ExternalSecret's -10) so a first-time install works without
-     pre-provisioning the target namespace. Safe — there is nothing to
-     endanger yet.
+     pre-provisioning the target namespace — but only when createNamespace
+     is true; otherwise omit (the documented out-of-band-provisioning path,
+     e.g. --create-namespace or ArgoCD's own CreateNamespace=true, which
+     does not stamp Helm's own release-ownership annotations onto the
+     namespace it creates — confirmed empirically — so this chart correctly
+     never tries to adopt it later). This is the only branch gated behind
+     createNamespace: it is the one that can newly *start* managing a
+     Namespace, which must never happen unintentionally (most importantly,
+     never under ArgoCD, where lookup always returns empty and would
+     otherwise make every sync take this branch).
 
-  2. It exists and already carries EITHER `helm.sh/hook` or
-     `helm.sh/resource-policy: keep`: omit rendering entirely, exactly like
-     the lookup-skip this file has always used. This covers two safe,
-     no-action-needed states: a Namespace already protected by a prior
-     release running this same logic (`keep` is checked against the *live*
-     object's current annotations, not the newly-rendered manifest, so an
-     omitted-but-already-protected resource survives regardless); and —
-     critically — the common case of a release that predates this file even
-     existing that already had the Namespace as a hook under the *old*
-     default (createNamespace=true, migrations.hook=true), which never
-     carried resource-policy: keep at all (this file only just started
-     adding it) but was never at risk in the first place: hook resources are
-     never tracked as part of "the release" ("hook resources are not managed
-     with corresponding releases", per Helm's docs), so their disappearing
-     from a later render was never interpreted as deletion the way an
-     ordinary resource's would be. Leaving that population alone rather than
-     "fixing" it by re-rendering as a hook (attempting to add the missing
-     keep annotation) matters: re-entering the hook path for a resource
-     Helm's hook-history already has a record of creating for this release
-     triggers before-hook-creation's delete-then-create — confirmed
-     empirically as destructive here, exactly the failure mode this whole
-     file exists to avoid — so a hook-classified Namespace is left exactly
-     as it is, unconditionally, forever.
+  2. It exists and already carries EITHER helm.sh/hook or
+     helm.sh/resource-policy: keep: omit rendering entirely, regardless of
+     createNamespace's current value. This covers two safe, no-action-needed
+     states: a Namespace already protected by a prior release running this
+     same logic (checked against the *live* object's current annotations,
+     not the newly-rendered manifest, so an omitted-but-already-protected
+     resource survives regardless); and — critically — the common case of a
+     release that predates this file even existing that already had the
+     Namespace as a hook under the old default (createNamespace=true,
+     migrations.hook=true), which never carried resource-policy: keep at all
+     (this file only just started adding it) but was never at risk in the
+     first place: hook resources are never tracked as part of "the release"
+     ("hook resources are not managed with corresponding releases", per
+     Helm's docs), so their disappearing from a later render was never
+     interpreted as deletion the way an ordinary resource's would be. Leaving
+     that population alone rather than "fixing" it by re-rendering as a hook
+     (attempting to add the missing keep annotation) matters: re-entering the
+     hook path for a resource Helm's hook-history already has a record of
+     creating for this release triggers before-hook-creation's
+     delete-then-create — confirmed empirically as destructive here, exactly
+     the failure mode this whole file exists to avoid — so a hook-classified
+     Namespace is left exactly as it is, unconditionally, forever.
 
-  3. It exists but carries NEITHER marker: the one remaining population —
-     specifically a release that had createNamespace=true (the old default)
-     and migrations.hook=false (the documented log-retention troubleshooting
-     toggle), where the Namespace was rendered as an ordinary, Helm-tracked,
-     non-hook resource with no annotation of either kind. Render it as a
-     plain, non-hook manifest (never as a hook) with resource-policy: keep
-     newly added. Reclassifying at all here — in *either* direction — is
-     destructive, confirmed empirically: presenting an existing
-     hook-created resource as an ordinary one fails outright ("exists and
-     cannot be imported into the current release: invalid ownership
-     metadata", since hook-created resources never receive Helm's
-     release-ownership labels — this is also why case 2 must never attempt
-     to "upgrade" a hook-classified Namespace into carrying resource-policy:
-     keep by rendering it as a plain manifest instead); and presenting an
-     existing ordinary resource as a hook for the first time deletes it
-     before the new hook's own annotations ever apply — confirmed by
-     watching a canary resource inside the namespace get wiped out and the
-     namespace's UID change, even though the new hook render included the
-     keep annotation. So this case is a same-kind (plain to plain) in-place
-     update: Helm patches the existing, already release-owned resource,
-     which safely stamps the missing annotation onto it going forward — the
-     very next release then satisfies case 2 above and stops touching it.
+  3. It exists, carries NEITHER marker, AND is already owned by this exact
+     Helm release (its meta.helm.sh/release-name and
+     meta.helm.sh/release-namespace annotations match .Release.Name and
+     .Release.Namespace, and it is labeled app.kubernetes.io/managed-by:
+     Helm — the same ownership stamp Helm itself checks before agreeing to
+     manage a pre-existing resource, confirmed empirically to be present on
+     any chart-rendered resource and absent from one created via
+     --create-namespace or plain kubectl): render as a plain, non-hook
+     manifest (never as a hook) with resource-policy: keep newly added —
+     UNCONDITIONALLY, regardless of createNamespace's current value. This is
+     the one branch that must not be gated behind createNamespace: it is the
+     actual legacy-migration case (a release that had createNamespace=true —
+     the old default — and migrations.hook=false, the documented
+     log-retention troubleshooting toggle, leaving the Namespace as an
+     ordinary, Helm-tracked, non-hook resource with no protective annotation
+     at all), and because createNamespace's default just changed from true
+     to false, exactly this release, upgrading without pinning that value
+     explicitly, would otherwise evaluate createNamespace as false on the
+     very next upgrade — which must NOT cause this branch to stop firing, or
+     Helm would interpret the sudden omission of a resource it has always
+     owned as a deletion request and cascade through everything inside.
+     Reclassifying at all here — in *either* direction — is destructive,
+     confirmed empirically: presenting an existing hook-created resource as
+     an ordinary one fails outright ("exists and cannot be imported into the
+     current release: invalid ownership metadata", since hook-created
+     resources never receive Helm's release-ownership labels — this is also
+     why case 2 must never attempt to "upgrade" a hook-classified Namespace
+     into carrying resource-policy: keep by rendering it as a plain manifest
+     instead); and presenting an existing ordinary resource as a hook for the
+     first time deletes it before the new hook's own annotations ever apply
+     — confirmed by watching a canary resource inside the namespace get
+     wiped out and the namespace's UID change, even though the new hook
+     render included the keep annotation. So this case is a same-kind (plain
+     to plain) in-place update: Helm patches the existing, already
+     release-owned resource, which safely stamps the missing annotation onto
+     it going forward — the very next release then satisfies case 2 above
+     and stops touching it, this time correctly regardless of what
+     createNamespace is set to by then.
 
-  A namespace that exists with neither Helm's own release-ownership labels
-  nor either marker (created entirely outside Helm, e.g. manually or by
-  ArgoCD's own CreateNamespace=true while createNamespace was also left true
-  here by mistake) hits case 3 and fails the same "cannot be imported"
-  ownership check — a loud, non-destructive error prompting a config fix,
-  which is the correct outcome for that misconfiguration.
+  4. It exists, carries neither marker, and is NOT owned by this release
+     (created entirely outside Helm, e.g. manually, via --create-namespace,
+     or by ArgoCD's own CreateNamespace=true): omit when createNamespace is
+     false (the recommended setting for exactly this situation — leave a
+     namespace this chart does not own alone); if createNamespace is
+     mistakenly left/set true, render the fresh hook-create form from case 1
+     instead, which Helm's own ownership check then rejects at apply time
+     with the same "cannot be imported" error as case 3's reasoning above —
+     a loud, non-destructive error prompting a config fix, which is the
+     correct outcome for that misconfiguration, rather than silently
+     adopting or destroying a namespace this release does not own.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
-{{- if .Values.createNamespace -}}
 {{- $existing := lookup "v1" "Namespace" "" $namespaceName -}}
 {{- $existingAnnotations := dict -}}
+{{- $existingLabels := dict -}}
 {{- if $existing -}}
 {{- $existingMeta := $existing.metadata | default dict -}}
 {{- $existingAnnotations = $existingMeta.annotations | default dict -}}
+{{- $existingLabels = $existingMeta.labels | default dict -}}
 {{- end -}}
 {{- $alreadySafe := or (hasKey $existingAnnotations "helm.sh/hook") (eq (get $existingAnnotations "helm.sh/resource-policy" | default "") "keep") -}}
+{{- $ownedByThisRelease := and $existing
+    (eq (get $existingAnnotations "meta.helm.sh/release-name" | default "") .Release.Name)
+    (eq (get $existingAnnotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
+    (eq (get $existingLabels "app.kubernetes.io/managed-by" | default "") "Helm") -}}
 {{- if not $existing }}
+{{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -120,7 +154,9 @@ metadata:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-11"
     "helm.sh/resource-policy": keep
-{{- else if not $alreadySafe }}
+{{- end }}
+{{- else if $alreadySafe }}
+{{- else if $ownedByThisRelease }}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -129,5 +165,15 @@ metadata:
     {{- include "openwork-ee.labels" . | nindent 4 }}
   annotations:
     "helm.sh/resource-policy": keep
-{{- end }}
+{{- else if .Values.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/resource-policy": keep
 {{- end }}

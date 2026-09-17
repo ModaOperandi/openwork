@@ -151,11 +151,41 @@ assert_contains "$nohook_rendered" 'helm.sh/resource-policy": keep'
 assert_namespace_hook_safe "$nohook_rendered"
 
 # createNamespace=false (the default, set explicitly here) skips the
-# Namespace object entirely (out-of-band provisioning, e.g. --create-namespace
-# or ArgoCD's own CreateNamespace=true syncOption).
+# Namespace object entirely when nothing exists live (out-of-band
+# provisioning, e.g. --create-namespace or ArgoCD's own CreateNamespace=true
+# syncOption) — `helm template` never has live cluster access, so this is
+# the only behavior this fixture can directly assert for createNamespace=false.
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
+# Critical regression this fixture CANNOT exercise (no live cluster access
+# from `helm template`), verified instead with real helm install/upgrade
+# cycles against a live cluster using the actual chart: createNamespace
+# defaulted to false in the same chart version that flipped this default, so
+# an existing release that had createNamespace=true (the old default) and
+# relied on the implicit default rather than pinning it explicitly would, on
+# its very next upgrade with this chart version and no other changes,
+# evaluate createNamespace as false. The lookup + ownership-detection logic
+# in templates/namespace.yaml (checking meta.helm.sh/release-name,
+# meta.helm.sh/release-namespace, and app.kubernetes.io/managed-by: Helm
+# against .Release.Name/.Release.Namespace) MUST run unconditionally,
+# independent of createNamespace's value, and MUST render the migration
+# (plain manifest + resource-policy: keep) whenever it finds an existing,
+# release-owned, unprotected Namespace — regardless of what createNamespace
+# now evaluates to — or the sudden omission would make Helm treat an
+# already-owned resource as deleted and cascade through the whole
+# namespace. Confirmed via a live install (legacy, unprotected, plain
+# Namespace) followed by an upgrade to this exact chart with createNamespace
+# deliberately left unset: the namespace's UID and a canary resource both
+# survived, and the live object came out stamped with resource-policy: keep.
+# The same live-cluster method also confirmed two adjacent cases stay
+# correct: a release whose Namespace was already a hook under the old
+# default survives an unset-createNamespace upgrade untouched (case 2 above
+# fires regardless of createNamespace too); and a namespace that exists but
+# is NOT owned by this release (created out-of-band, e.g. via
+# --create-namespace, which does not stamp Helm's ownership annotations —
+# confirmed empirically) is left completely alone when createNamespace is
+# false, rather than being adopted or altered.
 
 # Full render (ingress + inference + createNamespace all enabled): Namespace +
 # 11 namespaced resources.
