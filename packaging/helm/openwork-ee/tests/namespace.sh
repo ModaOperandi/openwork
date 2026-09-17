@@ -158,6 +158,18 @@ assert_namespace_hook_safe "$nohook_rendered"
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
+# The one Argo-visible ambiguity the template now rejects outright is
+# createNamespace=false plus migrations.hook=false with no live cluster access:
+# `lookup` cannot tell whether this is a safe fresh install or an existing
+# legacy plain-Namespace release that ArgoCD would otherwise prune. The chart
+# fails closed there and requires an explicit migration instead.
+legacy_argocd_err="$tmp_dir/legacy-argocd.err"
+if helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
+  > /dev/null 2> "$legacy_argocd_err"; then
+  printf 'Expected helm template to fail for createNamespace=false with migrations.hook=false when lookup is unavailable\n' >&2
+  exit 1
+fi
+assert_contains "$legacy_argocd_err" 'createNamespace=false with migrations.hook=false requires an explicit namespace migration'
 # Critical regression this fixture CANNOT exercise (no live cluster access
 # from `helm template`), verified instead with real helm install/upgrade
 # cycles against a live cluster using the actual chart: createNamespace

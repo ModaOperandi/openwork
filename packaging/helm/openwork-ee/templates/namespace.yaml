@@ -126,7 +126,12 @@
      with the same "cannot be imported" error as case 3's reasoning above —
      a loud, non-destructive error prompting a config fix, which is the
      correct outcome for that misconfiguration, rather than silently
-     adopting or destroying a namespace this release does not own.
+     adopting or destroying a namespace this release does not own. The one
+     ambiguity this file must refuse outright is createNamespace=false plus
+     migrations.hook=false when lookup cannot see the live cluster (ArgoCD /
+     helm template): that render path cannot distinguish a safe, missing
+     namespace from the dangerous legacy plain-Namespace migration case, so
+     it fails closed and requires an explicit Argo-visible migration first.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- $existing := lookup "v1" "Namespace" "" $namespaceName -}}
@@ -142,7 +147,9 @@
     (eq (get $existingAnnotations "meta.helm.sh/release-name" | default "") .Release.Name)
     (eq (get $existingAnnotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
     (eq (get $existingLabels "app.kubernetes.io/managed-by" | default "") "Helm") -}}
-{{- if not $existing }}
+{{- if and (not $existing) (not .Values.createNamespace) (not .Values.migrations.hook) -}}
+{{- fail (printf "openwork-ee: createNamespace=false with migrations.hook=false requires an explicit namespace migration when lookup is unavailable (for example ArgoCD or helm template); preserve the existing namespace with an Argo-visible manifest before upgrading") -}}
+{{- else if not $existing }}
 {{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
