@@ -180,14 +180,4 @@ metadata:
     "helm.sh/resource-policy": keep
 {{- else if .Values.createNamespace }}
 {{- fail (printf "namespace %q already exists but is not owned by Helm release %q; set createNamespace=false or provision it for this release" $namespaceName .Release.Name) }}
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ include "openwork-ee.namespace" . }}
-  labels:
-    {{- include "openwork-ee.labels" . | nindent 4 }}
-  annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-11"
-    "helm.sh/resource-policy": keep
 {{- end }}
