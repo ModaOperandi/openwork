@@ -242,13 +242,17 @@ its deletion" — checked against the live object's current annotations, not
 the newly-rendered manifest. Once stamped, the *next* release finds the
 marker already present and skips rendering the Namespace entirely from then
 on too, exactly like the lookup-skip this file has always used for fresh
-installs. No operator action is required for this migration; it happens
-automatically on the first upgrade to a chart version carrying this fix,
-regardless of whether `createNamespace` is pinned or left at its new
-default. Verified with live install/upgrade cycles against a real cluster
-using the actual chart, checking object identity (UID) and a canary
-resource's survival: an existing, unprotected Namespace upgraded to this
-chart version with `createNamespace` deliberately left unset (so it
+installs. For direct Helm upgrades, no operator action is required for this
+migration; it happens automatically on the first upgrade to a chart version
+carrying this fix, even if `createNamespace` is left at its new `false`
+default. Under ArgoCD, do **not** rely on this lookup-based migration for an
+existing release that previously used `migrations.hook: false`: make that
+Namespace safe first (for example by adding `helm.sh/resource-policy: keep`
+before the upgrade, or by using another Argo-visible one-release migration)
+before letting the chart omit it. The direct Helm path was verified with live
+install/upgrade cycles against a real cluster, checking object identity (UID)
+and a canary resource's survival: an existing, unprotected Namespace upgraded
+to this chart version with `createNamespace` deliberately left unset (so it
 evaluates to the new `false` default) survives, unchanged in identity, newly
 stamped with `resource-policy: keep`.
 
