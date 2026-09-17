@@ -294,12 +294,41 @@ helm template openwork-ee "$chart_dir" -f "$padded_existing_values" > "$padded_e
 assert_count "$padded_existing_rendered" 'name: "padded-secret"' 5
 assert_not_contains "$padded_existing_rendered" '  padded-secret'
 
-# Hook ordering for the migration chain: Namespace (-11) -> ExternalSecret
-# (-10) -> migration RBAC (-6) -> migration Job (-5).
-assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-11"' 1
+# Hook ordering for the migration chain: ExternalSecret (-10) -> migration
+# RBAC (-6) -> migration Job (-5). (Namespace's earliest -11 weight is opt-in
+# via createNamespace=true — default false, exercised in tests/namespace.sh —
+# so it does not render in this default-createNamespace fixture.)
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-10"' 1
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-6"' 3
 assert_count "$enabled_rendered" 'helm.sh/hook-weight": "-5"' 1
+# ExternalSecret and migration RBAC (ServiceAccount/Role/RoleBinding) carry an
+# explicit before-hook-creation: Helm and Argo CD both document that this is
+# also the default applied when no hook-delete-policy is set at all, so
+# omitting it would not change runtime behavior — only leave it undocumented.
+# It is tolerable for these four because they are leaf, non-cascading
+# resources with no finalizers (a delete completes near-instantly, so the
+# following create essentially never collides), and the ExternalSecret's
+# target.deletionPolicy: Retain means even a brief gap never touches the
+# materialized Secret workloads read from. The migration Job needs the same
+# policy for a different reason (its pod template is immutable, so a fresh
+# instance is required each run) and additionally opts into hook-failed so a
+# failed run is cleaned up immediately rather than lingering until the next
+# sync's before-hook-creation delete races a retry (which is what let a
+# failed Job get stuck Terminating, wedging its whole namespace). The
+# genuinely dangerous case is the Namespace hook (weight -11): deleting it
+# cascades to everything inside, so it defaults to off (createNamespace:
+# false) and must never rely on this default under ArgoCD at all — see
+# templates/namespace.yaml for why createNamespace=false (the default) plus
+# Argo CD's own `syncOptions: [CreateNamespace=true]` is the real fix there,
+# not an annotation choice.
+assert_count "$enabled_rendered" 'hook-delete-policy' 6
+# The 5 unquoted occurrences are ServiceAccount/Role/RoleBinding, ExternalSecret,
+# and the unrelated `helm test` env-probe hook (templates/tests/env-probe-job.yaml,
+# which only runs via `helm test` and never participates in Argo CD's
+# install/upgrade sync). The remaining occurrence is the migration Job's own
+# quoted policy string, asserted separately below.
+assert_count "$enabled_rendered" 'hook-delete-policy": before-hook-creation' 5
+assert_count "$enabled_rendered" 'hook-delete-policy": "before-hook-creation,hook-succeeded,hook-failed"' 1
 
 # Inline mode renders no wait RBAC/initContainer and keeps the migration hook
 # without the ExternalSecret hook annotations.

@@ -16,6 +16,8 @@ Published releases are available as an OCI Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version REPLACE_OPENWORK_VERSION \
+  --namespace openwork \
+  --create-namespace \
   -f values.prod.yaml
 ```
 
@@ -112,6 +114,138 @@ When applying rendered manifests directly, create the namespace first
 (`kubectl create namespace openwork`) since Helm does not create it for you in
 that flow.
 
+### Namespace creation under ArgoCD
+
+`createNamespace` (default `false`) controls whether the chart renders its own
+`Namespace` object, as the earliest `pre-install,pre-upgrade` hook. It
+defaults to `false` because it is unnecessary for the recommended `helm
+install`/`helm upgrade --create-namespace` workflow (the CLI flag creates the
+namespace itself, before this chart or any of its hooks ever render) and
+actively dangerous under ArgoCD (below).
+
+**This hook cannot help a first install into a not-yet-existing *release*
+namespace** (the one passed via `helm install --namespace`): Helm creates its
+own release-tracking record in that namespace before running any hook, so if
+it does not already exist and `--create-namespace` was not passed, the
+install fails immediately (`failed to create: namespaces "x" not found`)
+before this or any pre-install hook ever runs — pre-provision that namespace
+or pass `--create-namespace` regardless of this setting. Enable
+`createNamespace` only when the Helm release namespace already exists (or is
+a separate namespace altogether, e.g. a shared ops namespace) but this
+chart's own `namespace` value points at a *different*, not-yet-existing
+target namespace that this hook creates.
+
+When enabled for that scenario as a genuine `helm install`/`helm upgrade` CLI
+run, it is safe: the chart uses Helm's `lookup` function to detect an
+already-existing namespace and skips rendering the hook entirely on every
+upgrade after the first install.
+
+**This safety check does not work under ArgoCD**, which is why the default is
+`false` rather than relying on every consumer to override it. ArgoCD renders
+charts with `helm template` in its repo-server, which has no live cluster
+connection, so `lookup` always returns empty there — if `createNamespace` were
+enabled, the Namespace hook would render on every single sync,
+unconditionally. Helm and ArgoCD both document that a hook without an explicit
+`hook-delete-policy` defaults to `before-hook-creation` (delete the previous
+resource, then create a new one), and deleting a Namespace cascades to delete
+everything inside it. Enabling `createNamespace` under ArgoCD would mean the
+**entire release** — Deployments, Secrets, everything — gets torn down and
+rebuilt on every sync.
+
+Leave `createNamespace` at its default (`false`) for any ArgoCD `Application`
+and instead let ArgoCD create the namespace itself:
+
+```yaml
+# Application values
+createNamespace: false  # the default — shown for clarity, not required
+```
+
+```yaml
+# Application spec
+syncPolicy:
+  syncOptions:
+    - CreateNamespace=true
+```
+
+This is a native, non-hook, one-time ArgoCD operation with no delete-then-recreate
+lifecycle, so the namespace (and everything in it) is created once and then
+left alone by subsequent syncs.
+
+The Namespace's hook-ness does not vary with `migrations.hook` (see
+"Migrations" below): reclassifying the *same* resource between a hook and a
+plain manifest across upgrades is unsafe in both directions, confirmed
+against a live cluster — presenting an existing hook-created resource as an
+ordinary one hard-fails the upgrade outright (`exists and cannot be imported
+into the current release: invalid ownership metadata`, since hook-created
+resources never receive Helm's release-ownership labels), and presenting an
+existing ordinary resource as a hook for the first time deletes it before the
+new hook's own annotations ever apply, cascading to everything inside —
+confirmed by watching a canary resource get wiped out even though the new
+hook render already carried `resource-policy: keep`.
+
+Given that, this chart automatically detects and never disturbs a Namespace
+that is already safe, and on direct Helm runs with live-cluster `lookup`
+access safely migrates the one population that is not — without requiring
+`createNamespace: true`, which matters because this same chart version also
+flips that default from `true` to `false` (see above). For no-lookup renders
+such as ArgoCD, that legacy plain-Namespace migration is not automatic: use
+the explicit `migrateLegacyPlainNamespace=true` one-release path described
+below before letting the chart omit the Namespace.
+
+Using `lookup` to check the *live* object on the explicit
+`createNamespace=true` path, this chart:
+
+- Omits rendering entirely if the looked-up Namespace already carries either
+  `helm.sh/hook` or `helm.sh/resource-policy: keep`. The first covers the
+  common case of a release that predates this file, where the Namespace was
+  already a hook under the old default (`migrations.hook: true`) and was never
+  actually at risk (hook resources are never tracked by a release the way
+  ordinary ones are, so re-rendering as a hook here would only reintroduce the
+  very delete-then-create risk this logic exists to avoid — confirmed
+  empirically, that reclassification is what deletes it); the second covers a
+  Namespace an earlier release already migrated.
+- Otherwise, if `createNamespace=true` and the Namespace exists, carries
+  neither marker, and is already owned by *this* Helm release (its
+  `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`
+  annotations match this release, and it carries the
+  `app.kubernetes.io/managed-by: Helm` label — the same ownership stamp Helm
+  itself checks before agreeing to manage a pre-existing resource, confirmed
+  empirically to be present on any chart-rendered resource and absent from one
+  created via `--create-namespace` or plain `kubectl`): renders it as a plain,
+  non-hook manifest that only adds the missing annotation, never
+  reclassifying it, which Helm applies as an ordinary same-kind,
+  already-owned in-place update. This is the legacy-migration case for direct
+  Helm runs that keep `createNamespace=true`.
+- Only creates a brand-new Namespace (as the earliest hook) when
+  `createNamespace=true` and nothing exists live at all.
+- If `createNamespace=false`, the chart skips that live-cluster `lookup` path
+  entirely and omits the Namespace by default. For the legacy GitOps /
+  no-lookup migration case, set `migrateLegacyPlainNamespace=true` for one
+  release so the chart renders a plain Namespace with both
+  `helm.sh/resource-policy: keep` and ArgoCD `Prune=false` before later
+  omission.
+- Otherwise, when `createNamespace=true` and the existing Namespace is owned
+  by neither this release nor either marker (created entirely outside Helm,
+  e.g. manually, via `--create-namespace`, or by ArgoCD's own
+  `CreateNamespace=true`), the chart fails rather than silently adopting or
+  destroying a namespace this release does not own.
+
+`helm.sh/resource-policy: keep` itself states plainly (per Helm's docs) that
+it "instructs Helm to skip deleting this resource when a helm operation
+(such as `helm uninstall`, `helm upgrade` or `helm rollback`) would result in
+its deletion" — checked against the live object's current annotations, not
+the newly-rendered manifest. Once stamped, the *next* release finds the
+marker already present and skips rendering the Namespace entirely from then
+on too, exactly like the lookup-skip this file has always used for fresh
+installs. For direct Helm upgrades, that lookup-based migration only runs on
+the `createNamespace=true` path. If a legacy release still needs the plain
+Namespace migration while `createNamespace=false` (including the new default),
+set `migrateLegacyPlainNamespace=true` for one upgrade so the chart renders
+the plain Namespace with both `helm.sh/resource-policy: keep` and ArgoCD
+`Prune=false`, or add equivalent protection another way, before later omission.
+The direct Helm `createNamespace=true` path and the explicit
+`migrateLegacyPlainNamespace=true` render were both verified separately.
+
 ### Upgrade note: public URL values
 
 Current chart versions make `config.public.webOrigin` the primary public URL.
@@ -154,7 +288,10 @@ For local development from a repository checkout, render or install directly:
 
 ```bash
 helm template openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
+helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  -f values.prod.yaml
 ```
 
 ### Automations rollout
@@ -1001,7 +1138,7 @@ The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
 migrations:
   enabled: true
   hook: true
-  hookDeletePolicy: before-hook-creation,hook-succeeded
+  hookDeletePolicy: before-hook-creation,hook-succeeded,hook-failed
   command:
     - node
   args:
@@ -1009,6 +1146,32 @@ migrations:
 ```
 
 The default hook executes the precompiled Den DB bootstrap runner already built into the Den API image. On a completely empty database it applies the build-time current-schema SQL snapshot, records the committed migrations as the baseline, then runs pending migrations with Drizzle ORM. On an existing schema without a Drizzle ledger, it records the baseline before migrating.
+
+`hookDeletePolicy` keeps `hook-failed` alongside the defaults: a Job's pod
+template is immutable, so `before-hook-creation` gives each hook run a clean
+slate by deleting the previous instance first, but a **failed** run without
+`hook-failed` used to sit around until the *next* sync's `before-hook-creation`
+delete tried to clear it — and if that delete raced ArgoCD's own automated-sync
+retry timing, the Job (and, via ArgoCD's `hook-finalizer`, the namespace behind
+it) could get stuck `Terminating` indefinitely. `hook-failed` deletes it
+immediately instead, well clear of the next sync attempt. The migration RBAC
+(`ServiceAccount`/`Role`/`RoleBinding`) and the `ExternalSecret` hooks also
+carry `before-hook-creation` explicitly — Helm and ArgoCD both document that
+this is the default applied to any hook without an explicit
+`hook-delete-policy` anyway, so leaving it off would not change behavior, only
+leave it undocumented. It is tolerable for these leaf, non-cascading resources
+(no finalizers, so the delete completes essentially instantly, and the
+ExternalSecret's `target.deletionPolicy: Retain` protects the materialized
+Secret regardless). It is *not* tolerable for the Namespace hook, because
+deleting a Namespace cascades to everything inside it — see "Namespace
+creation under ArgoCD" above for why that one needs a different fix entirely
+(`createNamespace: false` plus ArgoCD's own `syncOptions: [CreateNamespace=true]`),
+not an annotation choice.
+
+`migrations.hook` only ever affects the ExternalSecret, migration RBAC, and
+migration Job above — it never affects the Namespace (see "Namespace creation
+under ArgoCD"), which is always a hook whenever `createNamespace` is true,
+independent of this value.
 
 For retained-log troubleshooting, temporarily disable hook behavior and reduce
 retries:

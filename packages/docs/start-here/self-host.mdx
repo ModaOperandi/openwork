@@ -27,6 +27,8 @@ For Kubernetes installs, use the published Helm chart:
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --version <chart-version> \
+  --namespace openwork \
+  --create-namespace \
   -f values.prod.yaml
 ```
 

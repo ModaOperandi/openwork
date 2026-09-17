@@ -4,6 +4,17 @@
   instead of failing on the env secretKeyRef. Rendered only outside inline
   mode. In hook mode these must be hooks with an earlier weight than the Job
   (-6 precedes the Job's -5) so they exist before it starts.
+
+  before-hook-creation is explicit here even though it is also Helm's and
+  Argo CD's documented default for an unannotated hook (Argo CD: "if no
+  deletion policy is specified, Argo CD will automatically assume
+  BeforeHookCreation rules") — omitting the annotation does not disable
+  delete-then-create, it renders it implicitly. That default is tolerable for
+  these three: they are leaf, non-cascading RBAC objects with no finalizers,
+  so the delete completes near-instantly and the following create rarely (if
+  ever) collides. Contrast the Namespace hook (templates/namespace.yaml),
+  where the very same default is dangerous because deleting it cascades to
+  every resource inside — see that file's comment for the real mitigation.
 */}}
 {{- /* Runs the legacy create=false shim before the secretsMode check below. */}}
 {{- include "openwork-ee.secretsMode.validate" . }}

@@ -8,11 +8,37 @@ fullnameOverride: ""
 # `helm install`, keep this aligned with `--namespace` / the release namespace.
 namespace: openwork
 
-# Render a Namespace object for the namespace above, so GitOps flows (ArgoCD
-# runs helm template and does not create namespaces unless CreateNamespace=true)
-# manage it as a resource from git. Set false only when the platform team
-# provisions namespaces out of band.
-createNamespace: true
+# Render a Namespace object for the namespace above, as a pre-install/
+# pre-upgrade hook. Defaults to false: Helm's `--create-namespace` CLI flag
+# already covers the common direct-Helm case without ever touching this hook,
+# and enabling it under ArgoCD is actively dangerous — ArgoCD's repo-server
+# renders charts via `helm template` with no live cluster connection, so the
+# `lookup`-based guard below that skips re-rendering this hook once the
+# namespace exists never engages there, meaning the hook (and Helm/Argo CD's
+# undocumented-by-omission default of before-hook-creation) would delete and
+# recreate the Namespace — cascading through every resource in the release —
+# on every single sync.
+#
+# This does NOT help with a fresh `helm install` into a not-yet-existing
+# release namespace (i.e. the same namespace passed via `--namespace`): Helm
+# creates its own release-tracking record in that namespace before running
+# any hook, pre-install hooks included, so if the namespace does not already
+# exist and --create-namespace was not passed, the install fails immediately
+# ("failed to create: namespaces \"x\" not found") without this hook ever
+# getting a chance to run. Set true only when the Helm *release* namespace
+# (`--namespace`) already exists (or is a distinct namespace altogether, e.g.
+# a shared ops namespace) but this chart's own `namespace` value above points
+# at a separate, not-yet-existing target namespace that this hook creates.
+# Under ArgoCD, create the namespace via `syncOptions: [CreateNamespace=true]`
+# instead; see "Namespace creation under ArgoCD" in README.md.
+createNamespace: false
+
+# For ArgoCD / other no-lookup renders, a release that previously used
+# createNamespace=true with migrations.hook=false may need a one-release plain
+# Namespace manifest so the legacy object is preserved and annotated before a
+# later render omits it. Leave false normally; set true only for that explicit
+# migration.
+migrateLegacyPlainNamespace: false
 
 image:
   tag: latest
@@ -406,7 +432,20 @@ inference:
 migrations:
   enabled: true
   hook: true
-  hookDeletePolicy: before-hook-creation,hook-succeeded
+  # before-hook-creation gives each hook run a clean slate (a Job's pod
+  # template is immutable, so re-running migrations requires a fresh Job
+  # object). The migration RBAC (ServiceAccount/Role/RoleBinding) and
+  # ExternalSecret hooks also carry this same policy explicitly — see the
+  # comments in templates/migration-rbac.yaml and templates/externalsecret.yaml
+  # for why it is tolerable there (leaf, non-cascading resources) but
+  # dangerous for the Namespace hook (templates/namespace.yaml), which is why
+  # createNamespace defaults to false. hook-succeeded and hook-failed
+  # additionally delete the Job right after it finishes, whichever way —
+  # without hook-failed, a failed run used to sit until the next sync's
+  # before-hook-creation delete tried to clear it, and if that delete raced
+  # ArgoCD's own retry timing, the stale Job (and the namespace behind it via
+  # ArgoCD's hook-finalizer) could get stuck Terminating indefinitely.
+  hookDeletePolicy: before-hook-creation,hook-succeeded,hook-failed
   backoffLimit: 2
   activeDeadlineSeconds: 600
   podAnnotations: {}

@@ -1,46 +1,183 @@
 {{- /*
-  lookup returns empty under helm template / ArgoCD repo-server rendering, so
-  GitOps flows still get the Namespace manifest; a live helm install/upgrade
-  skips it when the namespace already exists, avoiding AlreadyExists failures
-  against pre-provisioned namespaces.
+  ⚠️ ArgoCD/GitOps operators: set createNamespace=false and instead add
+  `syncOptions: [CreateNamespace=true]` to the Application. Do not leave
+  createNamespace=true under ArgoCD — see why below.
 
-  When migrations run as pre-install/pre-upgrade hooks, the hook chain
-  (ExternalSecret, migration RBAC, migration Job) is applied before normal
-  manifests — so a first-time install into a fresh namespace would create
-  namespaced hook resources before the Namespace exists. Render the Namespace
-  as the earliest hook (weight -11, preceding the ExternalSecret's -10) in
-  that case so the whole install proceeds without pre-provisioning. A hook
-  Namespace is cluster-scoped and immediately ready, so hook completion is
-  not delayed. helm uninstall does not remove hook resources, so the
-  Namespace outlives the release (intentional — deleting it would cascade to
-  any externally-created resources in it).
+  lookup returns empty under helm template / ArgoCD repo-server rendering (no
+  live cluster connection during rendering), so `$existing` below is always
+  empty there regardless of whether the namespace already exists. That means
+  under ArgoCD this Namespace unconditionally renders as a fresh hook on
+  every single sync — and, same as any Helm/Argo CD hook with no explicit
+  hook-delete-policy, it defaults to before-hook-creation (Argo CD: "if no
+  deletion policy is specified, Argo CD will automatically assume
+  BeforeHookCreation rules"; Helm's docs state the identical default).
+  Unlike the migration RBAC/ExternalSecret hooks, this default is genuinely
+  dangerous here: deleting a Namespace cascades to delete every resource
+  inside it, so leaving createNamespace=true under ArgoCD means the whole
+  release — Deployments, Secrets, everything — gets torn down and rebuilt on
+  every sync. There is no hook-delete-policy value that avoids this while
+  keeping the Namespace a hook (before-hook-creation is the only sane choice
+  for a resource that must exist before other pre-install hooks, and the
+  alternatives — hook-succeeded/hook-failed — would delete the Namespace
+  outright once the sync finishes). The only real fix is to keep this
+  resource from rendering at all under ArgoCD: set createNamespace=false so
+  this whole block is skipped, and let ArgoCD create the namespace itself via
+  `syncOptions: [CreateNamespace=true]` — a native, non-hook, one-time
+  operation with no delete-then-recreate lifecycle.
+
+  This does NOT let a first install skip pre-provisioning the *release*
+  namespace itself (the one passed via `helm install --namespace`): Helm
+  creates its own release-tracking record there before running any hook, so
+  if that namespace does not already exist and --create-namespace was not
+  passed, the install fails immediately, before this (or any) pre-install
+  hook ever runs. This hook only helps when the chart's own `namespace` value
+  (above) names a *different*, not-yet-existing namespace than the one Helm's
+  release itself lives in (which must already exist, or be created via
+  --create-namespace, some other way).
+
+  For a genuine (non-ArgoCD) helm install/upgrade CLI run, lookup has real
+  cluster access, and when createNamespace is true the branches below make
+  decisions based on what it finds live — all confirmed empirically against
+  a real cluster, including checking object identity (UID) and a canary
+  resource's survival across each transition, not just "the command
+  succeeded":
+
+  1. Nothing exists yet: render as the earliest hook (weight -11, preceding
+     the ExternalSecret's -10) so a first-time install works without
+     pre-provisioning the target namespace — but only when createNamespace
+     is true; otherwise omit (the documented out-of-band-provisioning path,
+     e.g. --create-namespace or ArgoCD's own CreateNamespace=true, which
+     does not stamp Helm's own release-ownership annotations onto the
+     namespace it creates — confirmed empirically — so this chart correctly
+     never tries to adopt it later). This is the only branch gated behind
+     createNamespace: it is the one that can newly *start* managing a
+     Namespace, which must never happen unintentionally (most importantly,
+     never under ArgoCD, where lookup always returns empty and would
+     otherwise make every sync take this branch).
+
+  2. It exists and already carries EITHER helm.sh/hook or
+     helm.sh/resource-policy: keep: omit rendering entirely, regardless of
+     createNamespace's current value. This covers two safe, no-action-needed
+     states: a Namespace already protected by a prior release running this
+     same logic (checked against the *live* object's current annotations,
+     not the newly-rendered manifest, so an omitted-but-already-protected
+     resource survives regardless); and — critically — the common case of a
+     release that predates this file even existing that already had the
+     Namespace as a hook under the old default (createNamespace=true,
+     migrations.hook=true), which never carried resource-policy: keep at all
+     (this file only just started adding it) but was never at risk in the
+     first place: hook resources are never tracked as part of "the release"
+     ("hook resources are not managed with corresponding releases", per
+     Helm's docs), so their disappearing from a later render was never
+     interpreted as deletion the way an ordinary resource's would be. Leaving
+     that population alone rather than "fixing" it by re-rendering as a hook
+     (attempting to add the missing keep annotation) matters: re-entering the
+     hook path for a resource Helm's hook-history already has a record of
+     creating for this release triggers before-hook-creation's
+     delete-then-create — confirmed empirically as destructive here, exactly
+     the failure mode this whole file exists to avoid — so a hook-classified
+     Namespace is left exactly as it is, unconditionally, forever.
+
+  3. It exists, carries NEITHER marker, AND is already owned by this exact
+     Helm release (its meta.helm.sh/release-name and
+     meta.helm.sh/release-namespace annotations match .Release.Name and
+     .Release.Namespace, and it is labeled app.kubernetes.io/managed-by:
+     Helm — the same ownership stamp Helm itself checks before agreeing to
+     manage a pre-existing resource, confirmed empirically to be present on
+     any chart-rendered resource and absent from one created via
+     --create-namespace or plain kubectl): when createNamespace is true,
+     render as a plain, non-hook manifest (never as a hook) with
+     resource-policy: keep newly added. This keeps the migration lookup on
+     the same explicit opt-in path as namespace creation itself, so the
+     default createNamespace=false path does not newly require cluster-scoped
+     Namespace get permission. Reclassifying at all here — in *either*
+     direction — is destructive, confirmed empirically: presenting an
+     existing hook-created resource as an ordinary one fails outright
+     ("exists and cannot be imported into the current release: invalid
+     ownership metadata", since hook-created resources never receive Helm's
+     release-ownership labels — this is also why case 2 must never attempt
+     to "upgrade" a hook-classified Namespace into carrying
+     resource-policy: keep by rendering it as a plain manifest instead); and
+     presenting an existing ordinary resource as a hook for the first time
+     deletes it before the new hook's own annotations ever apply — confirmed
+     by watching a canary resource inside the namespace get wiped out and the
+     namespace's UID change, even though the new hook render included the
+     keep annotation. So this case is a same-kind (plain to plain) in-place
+     update: Helm patches the existing, already release-owned resource, which
+     safely stamps the missing annotation onto it going forward — the very
+     next release then satisfies case 2 above and stops touching it.
+
+  4. It exists, carries neither marker, and is NOT owned by this release
+     (created entirely outside Helm, e.g. manually, via --create-namespace,
+     or by ArgoCD's own CreateNamespace=true): omit when createNamespace is
+     false (the recommended setting for exactly this situation — leave a
+     namespace this chart does not own alone); if createNamespace is
+     mistakenly left/set true, render the fresh hook-create form from case 1
+     instead, which Helm's own ownership check then rejects at apply time
+     with the same "cannot be imported" error as case 3's reasoning above —
+     a loud, non-destructive error prompting a config fix, which is the
+     correct outcome for that misconfiguration, rather than silently
+     adopting or destroying a namespace this release does not own. For ArgoCD /
+     other no-lookup renders, the legacy case this file cannot discover on its
+     own is an older release that used createNamespace=true with
+     migrations.hook=false and therefore left behind a plain, Helm-tracked,
+     unprotected Namespace. That path now has an explicit one-release
+     migration escape hatch via values.migrateLegacyPlainNamespace: it renders
+     a plain Namespace manifest with helm.sh/resource-policy: keep plus
+     ArgoCD's own Prune=false protection, so GitOps can preserve the legacy
+     object without relying on lookup.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
-{{- /*
-  Gate the cluster-scoped lookup behind createNamespace so restricted-RBAC
-  helm install/upgrade (no get on cluster Namespaces) still renders when the
-  feature is off.
-*/ -}}
 {{- $existing := dict -}}
+{{- $existingAnnotations := dict -}}
+{{- $existingLabels := dict -}}
+{{- $explicitLegacyMigration := and .Values.migrateLegacyPlainNamespace (not .Values.createNamespace) (not .Values.migrations.hook) -}}
 {{- if .Values.createNamespace -}}
 {{- $existing = lookup "v1" "Namespace" "" $namespaceName -}}
+{{- if $existing -}}
+{{- $existingMeta := $existing.metadata | default dict -}}
+{{- $existingAnnotations = $existingMeta.annotations | default dict -}}
+{{- $existingLabels = $existingMeta.labels | default dict -}}
 {{- end -}}
-{{- if and .Values.createNamespace (not $existing) }}
+{{- end -}}
+{{- $alreadySafe := or (hasKey $existingAnnotations "helm.sh/hook") (eq (get $existingAnnotations "helm.sh/resource-policy" | default "") "keep") -}}
+{{- $ownedByThisRelease := and $existing
+    (eq (get $existingAnnotations "meta.helm.sh/release-name" | default "") .Release.Name)
+    (eq (get $existingAnnotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
+    (eq (get $existingLabels "app.kubernetes.io/managed-by" | default "") "Helm") -}}
+{{- if not $existing }}
+{{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.labels" . | nindent 4 }}
-  {{- /*
-    No hook-delete-policy here: before-hook-creation would delete and recreate
-    the Namespace on any hook re-run, cascade-deleting everything inside it.
-    Hook + weight alone give the ordering; the lookup guard above already
-    suppresses re-creation on live installs.
-  */}}
-  {{- if .Values.migrations.hook }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-11"
-  {{- end }}
+    "helm.sh/resource-policy": keep
+{{- else if $explicitLegacyMigration }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    "argocd.argoproj.io/sync-options": Prune=false
+{{- end }}
+{{- else if $alreadySafe }}
+{{- else if $ownedByThisRelease }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+{{- else if .Values.createNamespace }}
+{{- fail (printf "namespace %q already exists but is not owned by Helm release %q; set createNamespace=false or provision it for this release" $namespaceName .Release.Name) }}
 {{- end }}

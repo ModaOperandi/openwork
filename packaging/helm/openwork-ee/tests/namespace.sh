@@ -26,23 +26,52 @@ assert_contains() {
   fi
 }
 
-# Default render: every namespaced resource lands in "openwork".
-# 9 resources: Namespace, Secret, ConfigMap, den-api/den-web
+assert_not_contains() {
+  local file="$1"
+  local needle="$2"
+  if grep -F -q -- "$needle" "$file"; then
+    printf 'Expected rendered chart not to contain %s\n' "$needle" >&2
+    return 1
+  fi
+}
+
+# Default render: createNamespace now defaults to false (Helm's own
+# --create-namespace flag already covers the direct-Helm case, and enabling
+# this hook by default was actively dangerous under ArgoCD — see
+# templates/namespace.yaml). No Namespace object renders unless explicitly
+# opted into. 8 namespaced resources: Secret, ConfigMap, den-api/den-web
 # Services+Deployments, migration Job, env-probe test Job.
 default_rendered="$tmp_dir/default.yaml"
 helm template openwork-ee "$chart_dir" > "$default_rendered"
-assert_count "$default_rendered" 'kind: Namespace' 1
-assert_contains "$default_rendered" 'name: "openwork"'
+assert_count "$default_rendered" 'kind: Namespace' 0
 assert_count "$default_rendered" '  namespace: "openwork"' 8
 assert_count "$default_rendered" '  namespace: "kube-system"' 0
 
-# With the migration hook enabled (default), the Namespace renders as the
-# earliest hook so first-time installs into a fresh namespace work: hook
-# resources (ExternalSecret, migration RBAC/Job) are namespaced and would
-# otherwise be created before a normal-manifest Namespace exists.
-assert_contains "$default_rendered" 'helm.sh/hook-weight": "-11"'
-# The Namespace hook must never carry before-hook-creation: a hook re-run
-# would delete and recreate the Namespace, cascade-deleting everything in it.
+# Opting in (createNamespace=true) with the migration hook enabled (default)
+# renders the Namespace as the earliest hook so a first-time install into a
+# not-yet-existing *target* namespace works (a namespace other than the one
+# already established for the Helm release itself — see the caveat atop
+# templates/namespace.yaml about why this can never bootstrap a fresh release
+# namespace on its own): hook resources (ExternalSecret, migration RBAC/Job)
+# are namespaced and would otherwise be created before a normal-manifest
+# Namespace exists.
+opt_in_rendered="$tmp_dir/opt-in.yaml"
+helm template openwork-ee "$chart_dir" --set createNamespace=true > "$opt_in_rendered"
+assert_count "$opt_in_rendered" 'kind: Namespace' 1
+assert_contains "$opt_in_rendered" 'name: "openwork"'
+assert_contains "$opt_in_rendered" 'helm.sh/hook-weight": "-11"'
+# The rendered Namespace hook must never carry an explicit hook-delete-policy
+# annotation: an explicit before-hook-creation would be no different from the
+# Helm/Argo CD default for an unannotated hook (both explicitly document
+# that before-hook-creation is what applies when no policy is set) — but
+# omitting it keeps the door open for genuine (non-ArgoCD) `helm install`/
+# `helm upgrade` runs, where the lookup() guard above has real cluster access
+# and skips rendering this hook at all once the namespace exists, so the
+# dangerous default is never reached in that path. It IS reached on every
+# ArgoCD sync (lookup() always returns empty there) — ArgoCD deployments must
+# leave createNamespace at its false default and use
+# `syncOptions: [CreateNamespace=true]` instead; see the long comment atop
+# templates/namespace.yaml.
 # (The env-probe test Job legitimately uses before-hook-creation, so scope the
 # check to the Namespace document.)
 assert_namespace_hook_safe() {
@@ -55,29 +84,82 @@ assert_namespace_hook_safe() {
     elif [[ "$line" == '---' ]]; then
       in_ns=0
     fi
-    if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'*'before-hook-creation'* ]]; then
-      printf 'Namespace must not use before-hook-creation (cascade-deletes contents on re-run)\n' >&2
+    if [[ "$in_ns" == 1 && "$line" == *'hook-delete-policy'* ]]; then
+      printf 'Namespace must not carry an explicit hook-delete-policy annotation\n' >&2
       return 1
     fi
   done < "$file"
 }
-assert_namespace_hook_safe "$default_rendered"
+assert_namespace_hook_safe "$opt_in_rendered"
+# Defense in depth against Helm's release-tracking semantics across mode
+# transitions this template cannot fully control from either side alone
+# (e.g. migrations.hook flipping true->false->true across upgrades, or a
+# pre-existing release from before non-hook rendering existed): the
+# Namespace always carries helm.sh/resource-policy: keep, which Helm's own
+# docs state "instructs Helm to skip deleting this resource when a helm
+# operation (such as helm uninstall, helm upgrade or helm rollback) would
+# result in its deletion" — unconditionally, regardless of how the resource
+# is currently classified. The resource is orphaned (unmanaged) rather than
+# actively kept in sync if such a transition happens, but never deleted.
+assert_contains "$opt_in_rendered" 'helm.sh/resource-policy": keep'
 
-# With the migration hook disabled, the Namespace is a plain manifest.
+# With createNamespace=true but the migration hook disabled, the Namespace
+# still renders as the same pre-install,pre-upgrade hook — its hook-ness no
+# longer varies with migrations.hook at all (see the long comment atop
+# templates/namespace.yaml).
 nohook_rendered="$tmp_dir/nohook.yaml"
-helm template openwork-ee "$chart_dir" --set migrations.hook=false > "$nohook_rendered"
+helm template openwork-ee "$chart_dir" --set createNamespace=true --set migrations.hook=false > "$nohook_rendered"
+# Direct Helm upgrades with a live cluster still avoid destructive
+# reclassification because templates/namespace.yaml omits an already-safe hook
+# namespace and only patches a live Helm-owned plain namespace in place. What
+# this fixture can assert is that the explicit createNamespace=true path keeps
+# rendering the existing hook form even when migrations.hook=false.
 assert_count "$nohook_rendered" 'kind: Namespace' 1
-assert_count "$nohook_rendered" 'helm.sh/hook-weight": "-11"' 0
+assert_contains "$nohook_rendered" 'helm.sh/hook-weight": "-11"'
+assert_contains "$nohook_rendered" 'helm.sh/resource-policy": keep'
+assert_namespace_hook_safe "$nohook_rendered"
 
-# createNamespace=false skips the Namespace object (out-of-band provisioning).
+# createNamespace=false (the default, set explicitly here) skips the
+# Namespace object entirely when nothing exists live (out-of-band
+# provisioning, e.g. --create-namespace or ArgoCD's own CreateNamespace=true
+# syncOption) — `helm template` never has live cluster access, so this is
+# the only behavior this fixture can directly assert for createNamespace=false.
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
+# Fresh no-lookup install renders remain allowed: by default the Namespace is
+# still omitted, and the legacy GitOps migration path below is opt-in only.
+legacy_argocd_install_rendered="$tmp_dir/legacy-argocd-install.yaml"
+helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
+  > "$legacy_argocd_install_rendered"
+assert_count "$legacy_argocd_install_rendered" 'kind: Namespace' 0
+# ArgoCD / other no-lookup legacy migrations now have an explicit one-release
+# path: render the plain Namespace manifest (never the hook form) together with
+# both Helm's keep annotation and ArgoCD's prune protection.
+legacy_argocd_migration_rendered="$tmp_dir/legacy-argocd-migration.yaml"
+helm template openwork-ee "$chart_dir" \
+  --set createNamespace=false \
+  --set migrations.hook=false \
+  --set migrateLegacyPlainNamespace=true > "$legacy_argocd_migration_rendered"
+assert_count "$legacy_argocd_migration_rendered" 'kind: Namespace' 1
+assert_contains "$legacy_argocd_migration_rendered" 'helm.sh/resource-policy": keep'
+assert_contains "$legacy_argocd_migration_rendered" 'argocd.argoproj.io/sync-options": Prune=false'
+assert_count "$legacy_argocd_migration_rendered" 'helm.sh/hook": pre-install,pre-upgrade' 0
+# Critical regression this fixture CANNOT exercise (no live cluster access
+# from `helm template`): the lookup + ownership-detection logic in
+# templates/namespace.yaml only runs on the explicit createNamespace=true
+# path, so the default createNamespace=false render continues to avoid a
+# cluster-scoped Namespace lookup altogether. Live-cluster checks covered the
+# opted-in branches separately: an existing Namespace that is already safe is
+# still left alone, an existing release-owned plain Namespace is still
+# migrated in place to add resource-policy: keep, and a namespace owned
+# outside this release is not silently adopted.
 
-# Full render (ingress + inference enabled): Namespace + 11 namespaced resources.
+# Full render (ingress + inference + createNamespace all enabled): Namespace +
+# 11 namespaced resources.
 full_rendered="$tmp_dir/full.yaml"
 helm template openwork-ee "$chart_dir" \
-  --set ingress.enabled=true --set inference.enabled=true > "$full_rendered"
+  --set createNamespace=true --set ingress.enabled=true --set inference.enabled=true > "$full_rendered"
 assert_count "$full_rendered" 'kind: Namespace' 1
 assert_count "$full_rendered" '  namespace: "openwork"' 11
 
@@ -94,7 +176,7 @@ assert_count "$fallback_rendered" '  namespace: "rel-ns"' 8
 
 # The Namespace object name follows the namespace value.
 nsdef_override_rendered="$tmp_dir/nsdef-override.yaml"
-helm template openwork-ee "$chart_dir" --set namespace=platform > "$nsdef_override_rendered"
+helm template openwork-ee "$chart_dir" --set createNamespace=true --set namespace=platform > "$nsdef_override_rendered"
 assert_count "$nsdef_override_rendered" 'kind: Namespace' 1
 assert_contains "$nsdef_override_rendered" 'name: "platform"'
 
