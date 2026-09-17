@@ -192,47 +192,43 @@ such as ArgoCD, that legacy plain-Namespace migration is not automatic: use
 the explicit `migrateLegacyPlainNamespace=true` one-release path described
 below before letting the chart omit the Namespace.
 
-Using `lookup` to check the *live* object, this chart:
+Using `lookup` to check the *live* object on the explicit
+`createNamespace=true` path, this chart:
 
-- Omits rendering entirely if the Namespace already carries either
-  `helm.sh/hook` or `helm.sh/resource-policy: keep` — regardless of
-  `createNamespace`. The first covers the common case of a release that
-  predates this file, where the Namespace was already a hook under the old
-  default (`migrations.hook: true`) and was never actually at risk (hook
-  resources are never tracked by a release the way ordinary ones are, so
-  re-rendering as a hook here would only reintroduce the very
-  delete-then-create risk this logic exists to avoid — confirmed
-  empirically, that reclassification is what deletes it); the second covers
-  a Namespace an earlier release already migrated.
-- Otherwise, if the Namespace exists, carries neither marker, and is already
-  owned by *this* Helm release (its `meta.helm.sh/release-name` and
-  `meta.helm.sh/release-namespace` annotations match this release, and it
-  carries the `app.kubernetes.io/managed-by: Helm` label — the same
-  ownership stamp Helm itself checks before agreeing to manage a
-  pre-existing resource, confirmed empirically to be present on any
-  chart-rendered resource and absent from one created via
-  `--create-namespace` or plain `kubectl`): renders it as a plain, non-hook
-  manifest that only adds the missing annotation, **regardless of
-  `createNamespace`**, never reclassifying it, which Helm applies as an
-  ordinary same-kind, already-owned in-place update. This is the actual
-  legacy-migration case — a release that had `createNamespace: true` (the
-  old default) and `migrations.hook: false` (the documented log-retention
-  troubleshooting toggle), where the Namespace was an ordinary, Helm-tracked,
-  non-hook resource with no protective annotation at all.
-- Only creates a brand-new Namespace (as the earliest hook) when nothing
-  exists live at all, and only then does it consult `createNamespace` —
-  exactly the one decision that must default to `false` to keep ArgoCD (and
-  any other GitOps flow with no live cluster access during rendering) from
-  ever entering this hook path unintentionally.
-- Otherwise (the Namespace exists but is owned by neither this release nor
-  either marker — created entirely outside Helm, e.g. manually, via
-  `--create-namespace`, or by ArgoCD's own `CreateNamespace=true`) leaves it
-  alone when `createNamespace` is false (the correct outcome for a namespace
-  this chart does not own), or attempts the fresh-hook-create path when
-  `createNamespace` is mistakenly left/set `true`, which Helm's own
-  ownership check then rejects with the same "cannot be imported" error
-  above — a loud, non-destructive error prompting a config fix rather than
-  silently adopting or destroying a namespace this release does not own.
+- Omits rendering entirely if the looked-up Namespace already carries either
+  `helm.sh/hook` or `helm.sh/resource-policy: keep`. The first covers the
+  common case of a release that predates this file, where the Namespace was
+  already a hook under the old default (`migrations.hook: true`) and was never
+  actually at risk (hook resources are never tracked by a release the way
+  ordinary ones are, so re-rendering as a hook here would only reintroduce the
+  very delete-then-create risk this logic exists to avoid — confirmed
+  empirically, that reclassification is what deletes it); the second covers a
+  Namespace an earlier release already migrated.
+- Otherwise, if `createNamespace=true` and the Namespace exists, carries
+  neither marker, and is already owned by *this* Helm release (its
+  `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`
+  annotations match this release, and it carries the
+  `app.kubernetes.io/managed-by: Helm` label — the same ownership stamp Helm
+  itself checks before agreeing to manage a pre-existing resource, confirmed
+  empirically to be present on any chart-rendered resource and absent from one
+  created via `--create-namespace` or plain `kubectl`): renders it as a plain,
+  non-hook manifest that only adds the missing annotation, never
+  reclassifying it, which Helm applies as an ordinary same-kind,
+  already-owned in-place update. This is the legacy-migration case for direct
+  Helm runs that keep `createNamespace=true`.
+- Only creates a brand-new Namespace (as the earliest hook) when
+  `createNamespace=true` and nothing exists live at all.
+- If `createNamespace=false`, the chart skips that live-cluster `lookup` path
+  entirely and omits the Namespace by default. For the legacy GitOps /
+  no-lookup migration case, set `migrateLegacyPlainNamespace=true` for one
+  release so the chart renders a plain Namespace with both
+  `helm.sh/resource-policy: keep` and ArgoCD `Prune=false` before later
+  omission.
+- Otherwise, when `createNamespace=true` and the existing Namespace is owned
+  by neither this release nor either marker (created entirely outside Helm,
+  e.g. manually, via `--create-namespace`, or by ArgoCD's own
+  `CreateNamespace=true`), the chart fails rather than silently adopting or
+  destroying a namespace this release does not own.
 
 `helm.sh/resource-policy: keep` itself states plainly (per Helm's docs) that
 it "instructs Helm to skip deleting this resource when a helm operation
@@ -241,21 +237,14 @@ its deletion" — checked against the live object's current annotations, not
 the newly-rendered manifest. Once stamped, the *next* release finds the
 marker already present and skips rendering the Namespace entirely from then
 on too, exactly like the lookup-skip this file has always used for fresh
-installs. For direct Helm upgrades, no operator action is required for this
-migration; it happens automatically on the first upgrade to a chart version
-carrying this fix, even if `createNamespace` is left at its new `false`
-default. Under ArgoCD, do **not** rely on this lookup-based migration for an
-existing release that previously used `migrations.hook: false`: make that
-Namespace safe first (for example by setting
-`migrateLegacyPlainNamespace=true` for one upgrade so the chart renders the
-plain Namespace with both `helm.sh/resource-policy: keep` and ArgoCD
-`Prune=false`, or by adding equivalent protection another way) before letting
-the chart omit it. The direct Helm path was verified with live
-install/upgrade cycles against a real cluster, checking object identity (UID)
-and a canary resource's survival: an existing, unprotected Namespace upgraded
-to this chart version with `createNamespace` deliberately left unset (so it
-evaluates to the new `false` default) survives, unchanged in identity, newly
-stamped with `resource-policy: keep`.
+installs. For direct Helm upgrades, that lookup-based migration only runs on
+the `createNamespace=true` path. If a legacy release still needs the plain
+Namespace migration while `createNamespace=false` (including the new default),
+set `migrateLegacyPlainNamespace=true` for one upgrade so the chart renders
+the plain Namespace with both `helm.sh/resource-policy: keep` and ArgoCD
+`Prune=false`, or add equivalent protection another way, before later omission.
+The direct Helm `createNamespace=true` path and the explicit
+`migrateLegacyPlainNamespace=true` render were both verified separately.
 
 ### Upgrade note: public URL values
 
