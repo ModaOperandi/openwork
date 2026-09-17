@@ -184,14 +184,13 @@ confirmed by watching a canary resource get wiped out even though the new
 hook render already carried `resource-policy: keep`.
 
 Given that, this chart automatically detects and never disturbs a Namespace
-that is already safe, and safely migrates the one population that is not —
-**independent of `createNamespace`'s current value**, which matters because
-this same chart version also flips that default from `true` to `false` (see
-above): an existing release that relied on the old implicit default rather
-than pinning `createNamespace: true` explicitly would otherwise evaluate the
-new default on its very next upgrade, and if the migration logic below were
-gated behind that value the way the Namespace's *creation* still is, this
-exact population would stop being rendered at all.
+that is already safe, and on direct Helm runs with live-cluster `lookup`
+access safely migrates the one population that is not — without requiring
+`createNamespace: true`, which matters because this same chart version also
+flips that default from `true` to `false` (see above). For no-lookup renders
+such as ArgoCD, that legacy plain-Namespace migration is not automatic: use
+the explicit `migrateLegacyPlainNamespace=true` one-release path described
+below before letting the chart omit the Namespace.
 
 Using `lookup` to check the *live* object, this chart:
 
