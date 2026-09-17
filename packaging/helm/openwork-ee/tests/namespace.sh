@@ -127,34 +127,24 @@ assert_namespace_hook_safe "$nohook_rendered"
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
-# Fresh no-lookup install renders remain allowed: with plain `helm template`,
-# Helm reports `.Release.IsInstall=true`, so the legacy-upgrade guard below
-# does not fire and the Namespace is still omitted.
+# Fresh no-lookup install renders remain allowed: by default the Namespace is
+# still omitted, and the legacy GitOps migration path below is opt-in only.
 legacy_argocd_install_rendered="$tmp_dir/legacy-argocd-install.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
   > "$legacy_argocd_install_rendered"
 assert_count "$legacy_argocd_install_rendered" 'kind: Namespace' 0
-# The one Argo-visible ambiguity the template now rejects outright is an
-# upgrade render with createNamespace=false plus migrations.hook=false and no
-# live cluster access: `lookup` cannot tell whether this is a safe no-op or an
-# existing legacy plain-Namespace release that ArgoCD would otherwise prune.
-# The chart fails closed there unless the operator explicitly confirms the
-# non-legacy case.
-legacy_argocd_err="$tmp_dir/legacy-argocd.err"
-if helm template openwork-ee "$chart_dir" --is-upgrade \
-  --set createNamespace=false --set migrations.hook=false \
-  > /dev/null 2> "$legacy_argocd_err"; then
-  printf 'Expected helm template --is-upgrade to fail for createNamespace=false with migrations.hook=false when lookup is unavailable\n' >&2
-  exit 1
-fi
-assert_contains "$legacy_argocd_err" 'createNamespace=false with migrations.hook=false requires either confirmNoLegacyPlainNamespace=true'
-legacy_argocd_bypass_rendered="$tmp_dir/legacy-argocd-bypass.yaml"
+# ArgoCD / other no-lookup legacy migrations now have an explicit one-release
+# path: render the plain Namespace manifest (never the hook form) together with
+# both Helm's keep annotation and ArgoCD's prune protection.
+legacy_argocd_migration_rendered="$tmp_dir/legacy-argocd-migration.yaml"
 helm template openwork-ee "$chart_dir" \
-  --is-upgrade \
   --set createNamespace=false \
   --set migrations.hook=false \
-  --set confirmNoLegacyPlainNamespace=true > "$legacy_argocd_bypass_rendered"
-assert_count "$legacy_argocd_bypass_rendered" 'kind: Namespace' 0
+  --set migrateLegacyPlainNamespace=true > "$legacy_argocd_migration_rendered"
+assert_count "$legacy_argocd_migration_rendered" 'kind: Namespace' 1
+assert_contains "$legacy_argocd_migration_rendered" 'helm.sh/resource-policy": keep'
+assert_contains "$legacy_argocd_migration_rendered" 'argocd.argoproj.io/sync-options": Prune=false'
+assert_count "$legacy_argocd_migration_rendered" 'helm.sh/hook": pre-install,pre-upgrade' 0
 # Critical regression this fixture CANNOT exercise (no live cluster access
 # from `helm template`): the lookup + ownership-detection logic in
 # templates/namespace.yaml only runs on the explicit createNamespace=true

@@ -117,18 +117,21 @@
      with the same "cannot be imported" error as case 3's reasoning above —
      a loud, non-destructive error prompting a config fix, which is the
      correct outcome for that misconfiguration, rather than silently
-     adopting or destroying a namespace this release does not own. The one
-     ambiguity this file must refuse by default is an upgrade with
-     createNamespace=false plus migrations.hook=false when lookup cannot see
-     the live cluster (ArgoCD / helm template --is-upgrade): that render path
-     cannot distinguish a safe, missing namespace from the dangerous legacy
-     plain-Namespace migration case, so it fails closed unless values
-     explicitly confirm there is no such legacy Namespace to preserve first.
+     adopting or destroying a namespace this release does not own. For ArgoCD /
+     other no-lookup renders, the legacy case this file cannot discover on its
+     own is an older release that used createNamespace=true with
+     migrations.hook=false and therefore left behind a plain, Helm-tracked,
+     unprotected Namespace. That path now has an explicit one-release
+     migration escape hatch via values.migrateLegacyPlainNamespace: it renders
+     a plain Namespace manifest with helm.sh/resource-policy: keep plus
+     ArgoCD's own Prune=false protection, so GitOps can preserve the legacy
+     object without relying on lookup.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- $existing := dict -}}
 {{- $existingAnnotations := dict -}}
 {{- $existingLabels := dict -}}
+{{- $explicitLegacyMigration := and .Values.migrateLegacyPlainNamespace (not .Values.createNamespace) (not .Values.migrations.hook) -}}
 {{- if .Values.createNamespace -}}
 {{- $existing = lookup "v1" "Namespace" "" $namespaceName -}}
 {{- if $existing -}}
@@ -142,9 +145,7 @@
     (eq (get $existingAnnotations "meta.helm.sh/release-name" | default "") .Release.Name)
     (eq (get $existingAnnotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
     (eq (get $existingLabels "app.kubernetes.io/managed-by" | default "") "Helm") -}}
-{{- if and .Release.IsUpgrade (not $existing) (not .Values.createNamespace) (not .Values.migrations.hook) (not .Values.confirmNoLegacyPlainNamespace) -}}
-{{- fail (printf "openwork-ee: createNamespace=false with migrations.hook=false requires either confirmNoLegacyPlainNamespace=true for a known-safe no-lookup render or an explicit namespace migration that preserves any legacy plain Namespace before upgrading") -}}
-{{- else if not $existing }}
+{{- if not $existing }}
 {{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
@@ -156,6 +157,16 @@ metadata:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-11"
     "helm.sh/resource-policy": keep
+{{- else if $explicitLegacyMigration }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    "argocd.argoproj.io/sync-options": Prune=false
 {{- end }}
 {{- else if $alreadySafe }}
 {{- else if $ownedByThisRelease }}

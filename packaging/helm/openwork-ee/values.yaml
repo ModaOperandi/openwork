@@ -33,13 +33,12 @@ namespace: openwork
 # instead; see "Namespace creation under ArgoCD" in README.md.
 createNamespace: false
 
-# When createNamespace=false and migrations.hook=false on an upgrade render with
-# no live cluster lookup (for example ArgoCD or `helm template --is-upgrade`),
-# the chart cannot distinguish a safe no-op from a legacy plain Namespace
-# created by older chart versions. Leave this false to fail closed; set true
-# only when you know there is no legacy Helm-managed plain Namespace that must
-# be preserved by an explicit migration first.
-confirmNoLegacyPlainNamespace: false
+# For ArgoCD / other no-lookup renders, a release that previously used
+# createNamespace=true with migrations.hook=false may need a one-release plain
+# Namespace manifest so the legacy object is preserved and annotated before a
+# later render omits it. Leave false normally; set true only for that explicit
+# migration.
+migrateLegacyPlainNamespace: false
 
 image:
   tag: latest
