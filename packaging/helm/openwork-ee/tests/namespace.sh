@@ -162,14 +162,21 @@ assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
 # createNamespace=false plus migrations.hook=false with no live cluster access:
 # `lookup` cannot tell whether this is a safe fresh install or an existing
 # legacy plain-Namespace release that ArgoCD would otherwise prune. The chart
-# fails closed there and requires an explicit migration instead.
+# fails closed there unless the operator explicitly confirms the non-legacy
+# case.
 legacy_argocd_err="$tmp_dir/legacy-argocd.err"
 if helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
   > /dev/null 2> "$legacy_argocd_err"; then
   printf 'Expected helm template to fail for createNamespace=false with migrations.hook=false when lookup is unavailable\n' >&2
   exit 1
 fi
-assert_contains "$legacy_argocd_err" 'createNamespace=false with migrations.hook=false requires an explicit namespace migration'
+assert_contains "$legacy_argocd_err" 'createNamespace=false with migrations.hook=false requires either confirmNoLegacyPlainNamespace=true'
+legacy_argocd_bypass_rendered="$tmp_dir/legacy-argocd-bypass.yaml"
+helm template openwork-ee "$chart_dir" \
+  --set createNamespace=false \
+  --set migrations.hook=false \
+  --set confirmNoLegacyPlainNamespace=true > "$legacy_argocd_bypass_rendered"
+assert_count "$legacy_argocd_bypass_rendered" 'kind: Namespace' 0
 # Critical regression this fixture CANNOT exercise (no live cluster access
 # from `helm template`): the lookup + ownership-detection logic in
 # templates/namespace.yaml only runs on the explicit createNamespace=true
