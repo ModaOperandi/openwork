@@ -127,21 +127,30 @@ assert_namespace_hook_safe "$nohook_rendered"
 no_nsdef_rendered="$tmp_dir/no-nsdef.yaml"
 helm template openwork-ee "$chart_dir" --set createNamespace=false > "$no_nsdef_rendered"
 assert_count "$no_nsdef_rendered" 'kind: Namespace' 0
-# The one Argo-visible ambiguity the template now rejects outright is
-# createNamespace=false plus migrations.hook=false with no live cluster access:
-# `lookup` cannot tell whether this is a safe fresh install or an existing
-# legacy plain-Namespace release that ArgoCD would otherwise prune. The chart
-# fails closed there unless the operator explicitly confirms the non-legacy
-# case.
+# Fresh no-lookup install renders remain allowed: with plain `helm template`,
+# Helm reports `.Release.IsInstall=true`, so the legacy-upgrade guard below
+# does not fire and the Namespace is still omitted.
+legacy_argocd_install_rendered="$tmp_dir/legacy-argocd-install.yaml"
+helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
+  > "$legacy_argocd_install_rendered"
+assert_count "$legacy_argocd_install_rendered" 'kind: Namespace' 0
+# The one Argo-visible ambiguity the template now rejects outright is an
+# upgrade render with createNamespace=false plus migrations.hook=false and no
+# live cluster access: `lookup` cannot tell whether this is a safe no-op or an
+# existing legacy plain-Namespace release that ArgoCD would otherwise prune.
+# The chart fails closed there unless the operator explicitly confirms the
+# non-legacy case.
 legacy_argocd_err="$tmp_dir/legacy-argocd.err"
-if helm template openwork-ee "$chart_dir" --set createNamespace=false --set migrations.hook=false \
+if helm template openwork-ee "$chart_dir" --is-upgrade \
+  --set createNamespace=false --set migrations.hook=false \
   > /dev/null 2> "$legacy_argocd_err"; then
-  printf 'Expected helm template to fail for createNamespace=false with migrations.hook=false when lookup is unavailable\n' >&2
+  printf 'Expected helm template --is-upgrade to fail for createNamespace=false with migrations.hook=false when lookup is unavailable\n' >&2
   exit 1
 fi
 assert_contains "$legacy_argocd_err" 'createNamespace=false with migrations.hook=false requires either confirmNoLegacyPlainNamespace=true'
 legacy_argocd_bypass_rendered="$tmp_dir/legacy-argocd-bypass.yaml"
 helm template openwork-ee "$chart_dir" \
+  --is-upgrade \
   --set createNamespace=false \
   --set migrations.hook=false \
   --set confirmNoLegacyPlainNamespace=true > "$legacy_argocd_bypass_rendered"

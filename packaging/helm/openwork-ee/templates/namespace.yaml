@@ -118,12 +118,12 @@
      a loud, non-destructive error prompting a config fix, which is the
      correct outcome for that misconfiguration, rather than silently
      adopting or destroying a namespace this release does not own. The one
-     ambiguity this file must refuse by default is createNamespace=false plus
-     migrations.hook=false when lookup cannot see the live cluster (ArgoCD /
-     helm template): that render path cannot distinguish a safe, missing
-     namespace from the dangerous legacy plain-Namespace migration case, so
-     it fails closed unless values explicitly confirm there is no such legacy
-     Namespace to preserve first.
+     ambiguity this file must refuse by default is an upgrade with
+     createNamespace=false plus migrations.hook=false when lookup cannot see
+     the live cluster (ArgoCD / helm template --is-upgrade): that render path
+     cannot distinguish a safe, missing namespace from the dangerous legacy
+     plain-Namespace migration case, so it fails closed unless values
+     explicitly confirm there is no such legacy Namespace to preserve first.
 */ -}}
 {{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
 {{- $existing := dict -}}
@@ -142,7 +142,7 @@
     (eq (get $existingAnnotations "meta.helm.sh/release-name" | default "") .Release.Name)
     (eq (get $existingAnnotations "meta.helm.sh/release-namespace" | default "") .Release.Namespace)
     (eq (get $existingLabels "app.kubernetes.io/managed-by" | default "") "Helm") -}}
-{{- if and (not $existing) (not .Values.createNamespace) (not .Values.migrations.hook) (not .Values.confirmNoLegacyPlainNamespace) -}}
+{{- if and .Release.IsUpgrade (not $existing) (not .Values.createNamespace) (not .Values.migrations.hook) (not .Values.confirmNoLegacyPlainNamespace) -}}
 {{- fail (printf "openwork-ee: createNamespace=false with migrations.hook=false requires either confirmNoLegacyPlainNamespace=true for a known-safe no-lookup render or an explicit namespace migration that preserves any legacy plain Namespace before upgrading") -}}
 {{- else if not $existing }}
 {{- if .Values.createNamespace }}
