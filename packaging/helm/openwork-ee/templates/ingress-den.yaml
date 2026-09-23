@@ -6,7 +6,8 @@ metadata:
   namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- $webAnnotations := mergeOverwrite (deepCopy .Values.ingress.annotations) .Values.ingress.web.annotations }}
+  {{- with $webAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

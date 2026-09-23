@@ -94,12 +94,20 @@ migrations:
 ingress:
   enabled: true
   className: ""
+  # Shared across both Ingress objects: the managed certificate covers both
+  # hosts, so it is safe to reuse here. The reserved static IP is NOT — GKE
+  # gives each Ingress its own GCLB, so two Ingresses referencing the same
+  # global-static-ip-name would fight over one forwarding rule and only one
+  # would reconcile. Each host therefore gets its own reserved IP below.
   annotations:
     kubernetes.io/ingress.class: gce
-    kubernetes.io/ingress.global-static-ip-name: REPLACE_GLOBAL_STATIC_IP_NAME
     networking.gke.io/managed-certificates: REPLACE_MANAGED_CERTIFICATE_NAME
   web:
     host: REPLACE_WEB_HOST
+    annotations:
+      kubernetes.io/ingress.global-static-ip-name: REPLACE_WEB_GLOBAL_STATIC_IP_NAME
   api:
     enabled: true
     host: REPLACE_API_HOST
+    annotations:
+      kubernetes.io/ingress.global-static-ip-name: REPLACE_API_GLOBAL_STATIC_IP_NAME
