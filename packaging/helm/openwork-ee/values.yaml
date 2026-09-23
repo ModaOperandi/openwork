@@ -464,14 +464,27 @@ migrations:
 ingress:
   enabled: false
   className: ""
+  # Annotations applied to both the web and API Ingress objects. Keep only
+  # values that are safe to duplicate across two separate Ingress resources
+  # here (e.g. ingress class). Provider annotations that must be unique per
+  # Ingress (GKE's kubernetes.io/ingress.global-static-ip-name, per-host
+  # healthcheck paths, etc.) belong in ingress.web.annotations /
+  # ingress.api.annotations instead, since two Ingresses sharing one of those
+  # would make one of them fail to reconcile.
   annotations: {}
   web:
     host: openwork.example.com
     path: /
     pathType: Prefix
+    # Annotations applied only to the web (den-web) Ingress, merged over
+    # ingress.annotations.
+    annotations: {}
   api:
     enabled: true
     host: api.openwork.example.com
     path: /
     pathType: Prefix
+    # Annotations applied only to the API (den-api) Ingress, merged over
+    # ingress.annotations.
+    annotations: {}
   tls: []

@@ -39,7 +39,7 @@ Agent-created resource names and defaults (change if required):
 - Cloud SQL instance name: GCP Cloud SQL resource to create, default `openwork-ee-mysql`.
 - Cloud SQL database name: MySQL database to create inside Cloud SQL, default `openwork_den`.
 - Cloud SQL user: MySQL user to create for OpenWork, default `openwork`.
-- Reserved global address name: GCP resource name for the static global IPv4 address used by the HTTPS load balancer, default `openwork-ee-ip`. This is not the IP address; the agent creates the address and reports the allocated IP.
+- Reserved global address names: GCP resource names for the two static global IPv4 addresses used by the web and API HTTPS load balancers (GKE gives each Ingress its own load balancer, so they cannot share one address). Defaults `openwork-ee-web-ip` and `openwork-ee-api-ip`. These are not the IP addresses; the agent creates the addresses and reports both allocated IPs.
 
 Operating rules:
 
@@ -67,7 +67,7 @@ Provision and deploy according to the GCP runbook:
 - Create or reuse private services access for the target VPC.
 - Create a regional GKE Autopilot cluster using the requested/default cluster name.
 - Create Cloud SQL for MySQL 8 with private IP, backups enabled, and public IP disabled unless the docs require otherwise.
-- Reserve a global IPv4 address.
+- Reserve two global IPv4 addresses, one for the web hostname and one for the API hostname.
 - Apply the documented GKE `BackendConfig` and `ManagedCertificate` resources.
 - Create the namespace and runtime Secret.
 - Install the Helm release using GCP ingress values and the requested/default release name.
@@ -76,7 +76,7 @@ Provision and deploy according to the GCP runbook:
 
 DNS handoff:
 
-- After the reserved global IP exists, pause and tell me the exact DNS records to create for `{{WEB_HOSTNAME}}` and `{{API_HOSTNAME}}`.
+- After both reserved global IPs exist, pause and tell me the exact DNS records to create for `{{WEB_HOSTNAME}}` (pointing at the web address) and `{{API_HOSTNAME}}` (pointing at the API address).
 - Wait for my confirmation that DNS is updated.
 - Verify public DNS resolution yourself before continuing.
 - Do not claim HTTPS is ready until the managed certificate is active and `openssl` or equivalent external checks show trusted certificates for both hostnames.
@@ -102,5 +102,5 @@ Track any reusable documentation gaps, failed commands, unclear values, required
 
 Final report:
 
-Report `Passed`, `Incomplete`, or `Failed`, plus chart/app version, resources created, reserved IP, DNS records, Cloud SQL tier/region/private-IP/backup state, GKE type/region, Helm revision/status, migration result, pod readiness, backend health, certificate status, external readiness checks, administrator setup result, replay/signup rejection result, sign-out/sign-in result, browser handoffs completed by the operator, non-secret commands run, deviations from docs, documentation PRs, ongoing cost items, and exact cleanup commands.
+Report `Passed`, `Incomplete`, or `Failed`, plus chart/app version, resources created, reserved IPs (web and API), DNS records, Cloud SQL tier/region/private-IP/backup state, GKE type/region, Helm revision/status, migration result, pod readiness, backend health, certificate status, external readiness checks, administrator setup result, replay/signup rejection result, sign-out/sign-in result, browser handoffs completed by the operator, non-secret commands run, deviations from docs, documentation PRs, ongoing cost items, and exact cleanup commands.
 ```

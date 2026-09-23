@@ -5,8 +5,9 @@ Related: `packaging/helm/openwork-ee`, `packaging/helm/openwork-ee/examples/valu
 
 This is the recommended Google Cloud path for a first production-like OpenWork
 EE self-host install. Use Helm on GKE Autopilot with Cloud SQL for MySQL. For
-web/API exposure, use GKE Ingress with Google-managed certificates, a reserved
-global IP address, and explicit backend health checks.
+web/API exposure, use two GKE Ingresses (one per host) with a shared
+Google-managed certificate, one reserved global IP address per Ingress, and
+explicit backend health checks.
 
 Google recommends Gateway API for new L7 traffic management, and GKE Ingress is
 in maintenance mode. The current OpenWork chart emits Ingress resources, so GKE
@@ -25,13 +26,14 @@ balancing, host routing, managed certificates, and backend health checks.
 - optional inference service, disabled by default
 - one Cloud SQL for MySQL database
 - one single-org OpenWork deployment
-- one external GKE Ingress backed by a Google Cloud Application Load Balancer
+- one external GKE Ingress per host (web and API), each backed by its own
+  Google Cloud Application Load Balancer
 - one Google-managed certificate covering web and API hosts
 
 Google Cloud owns the GKE cluster, Autopilot compute lifecycle, VPC networking,
 Cloud Load Balancing, managed certificates, Cloud SQL, IAM, and firewall rules.
 The OpenWork Helm chart owns OpenWork Deployments, Services, ConfigMaps,
-Secrets, health probes, the optional Ingress, and the database migration Job.
+Secrets, health probes, the optional Ingresses, and the database migration Job.
 The `BackendConfig` and `ManagedCertificate` resources in this guide are
 GKE-specific platform resources applied alongside the chart.
 
@@ -197,15 +199,23 @@ kubectl run mysql-client \
     --execute "select 1"
 ```
 
-## 3. Reserve a global IP and create GKE resources
+## 3. Reserve global IPs and create GKE resources
 
-Reserve a global IP address for the HTTPS load balancer:
+GKE gives each Ingress its own load balancer, so the web and API Ingresses
+each need their own reserved global IP; reusing one static IP name for both
+means only one Ingress can bind its forwarding rule and the other never
+reconciles. Reserve one address per host:
 
 ```bash
-gcloud compute addresses create openwork-ee-ip \
+gcloud compute addresses create openwork-ee-web-ip \
+  --global
+gcloud compute addresses create openwork-ee-api-ip \
   --global
 
-gcloud compute addresses describe openwork-ee-ip \
+gcloud compute addresses describe openwork-ee-web-ip \
+  --global \
+  --format='value(address)'
+gcloud compute addresses describe openwork-ee-api-ip \
   --global \
   --format='value(address)'
 ```
@@ -407,24 +417,27 @@ migrations:
   backoffLimit: 2
 ```
 
-## 7. Point DNS at the global load balancer IP
+## 7. Point DNS at the global load balancer IPs
 
-Get the reserved IP address:
+Get the reserved IP addresses:
 
 ```bash
-gcloud compute addresses describe openwork-ee-ip \
+gcloud compute addresses describe openwork-ee-web-ip \
+  --global \
+  --format='value(address)'
+gcloud compute addresses describe openwork-ee-api-ip \
   --global \
   --format='value(address)'
 ```
 
 Create DNS records:
 
-- `openwork.example.com` -> the reserved global IP address.
-- `api.openwork.example.com` -> the reserved global IP address.
+- `openwork.example.com` -> the reserved `openwork-ee-web-ip` address.
+- `api.openwork.example.com` -> the reserved `openwork-ee-api-ip` address.
 
-GKE can take several minutes to provision the load balancer. Google-managed
-certificates can take up to an hour to become active after DNS points at the
-load balancer.
+GKE can take several minutes to provision each load balancer. Google-managed
+certificates can take up to an hour to become active after DNS points at both
+load balancers.
 
 Check status:
 
@@ -542,7 +555,7 @@ single organization. Password sign-in for that organization is rejected.
 | Ingress does not reconcile | HTTP load balancing add-on is disabled or Ingress annotation is wrong | Keep HTTP load balancing enabled and use `kubernetes.io/ingress.class: gce` |
 | Backends are unhealthy | GKE load balancer health checks do not match OpenWork readiness endpoints | Apply the `BackendConfig` resources and keep the service annotations from the starter values |
 | Ingress events report `TimeoutSec should be less than checkIntervalSec` | The backend health-check timeout is greater than or equal to its effective interval | Set `checkIntervalSec: 15` and `timeoutSec: 5` on both `BackendConfig` resources |
-| Managed certificate is not `Active` | DNS does not point at the load balancer or provisioning is still running | Point both hosts at the reserved global IP and wait; check `kubectl describe managedcertificate` |
+| Managed certificate is not `Active` | DNS does not point at the corresponding load balancer or provisioning is still running | Point each host at its own reserved global IP and wait; check `kubectl describe managedcertificate` |
 | Migration Job fails to connect to MySQL | Private services access, VPC, credentials, IP, or TLS mode are wrong | Test from `mysql-client`, confirm the private IP, and confirm GKE and Cloud SQL share VPC reachability |
 | Migration Job logs show `self-signed certificate in certificate chain` | Strict certificate verification is being used without the cloud MySQL CA bundle | Use `?sslaccept=accept` for the smoke path or mount/configure the CA bundle before strict verification |
 | `ImagePullBackOff` from GHCR | Private image or missing pull token | Add `imagePullSecrets` |
@@ -556,7 +569,8 @@ For a disposable test:
 
 ```bash
 helm uninstall openwork-ee -n openwork-ee
-gcloud compute addresses delete openwork-ee-ip --global
+gcloud compute addresses delete openwork-ee-web-ip --global
+gcloud compute addresses delete openwork-ee-api-ip --global
 gcloud container clusters delete "$GKE_CLUSTER" --location "$GCP_REGION"
 gcloud sql instances delete "$SQL_INSTANCE"
 ```

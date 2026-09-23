@@ -405,8 +405,9 @@ Provider-specific starter guides:
 - Google Cloud GKE:
   [guide](../../../docs/gcp-gke-helm.md),
   [`examples/values.gcp-ingress.yaml`](examples/values.gcp-ingress.yaml).
-  The recommended first GCP path is GKE Ingress with a reserved global IP,
-  Google-managed certificate, and BackendConfig health checks.
+  The recommended first GCP path is two GKE Ingresses (one per host) each
+  with its own reserved global IP, a shared Google-managed certificate, and
+  BackendConfig health checks.
 
 `ingress.enabled=true` only emits Kubernetes `Ingress` resources; it does not
 install an ingress controller. Use it only when the cluster already has a
