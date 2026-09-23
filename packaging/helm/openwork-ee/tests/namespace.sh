@@ -156,12 +156,13 @@ assert_count "$legacy_argocd_migration_rendered" 'helm.sh/hook": pre-install,pre
 # outside this release is not silently adopted.
 
 # Full render (ingress + inference + createNamespace all enabled): Namespace +
-# 11 namespaced resources.
+# 12 namespaced resources (ingress.enabled=true also renders the API Ingress,
+# since ingress.api.enabled defaults to true).
 full_rendered="$tmp_dir/full.yaml"
 helm template openwork-ee "$chart_dir" \
   --set createNamespace=true --set ingress.enabled=true --set inference.enabled=true > "$full_rendered"
 assert_count "$full_rendered" 'kind: Namespace' 1
-assert_count "$full_rendered" '  namespace: "openwork"' 11
+assert_count "$full_rendered" '  namespace: "openwork"' 12
 
 # Explicit override wins on every resource.
 override_rendered="$tmp_dir/override.yaml"
